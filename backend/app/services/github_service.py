@@ -284,3 +284,177 @@ class GitHubService:
             return PRStatus.NEEDS_REVIEW
         
         return PRStatus.NEEDS_REVIEW
+
+    async def get_team_members(self, org: str, team_slug: str) -> List[User]:
+        """Get all members of a team in an organization"""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/orgs/{org}/teams/{team_slug}/members"
+            )
+            response.raise_for_status()
+            members_data = response.json()
+            
+            members = []
+            for member_data in members_data:
+                member = User(
+                    id=member_data["id"],
+                    login=member_data["login"],
+                    avatar_url=member_data["avatar_url"],
+                    html_url=member_data["html_url"]
+                )
+                members.append(member)
+            
+            return members
+        except Exception as e:
+            logger.error(f"Failed to get team members for {org}/{team_slug}: {e}")
+            return []
+    
+    async def get_team_info(self, org: str, team_slug: str) -> Optional[Dict[str, Any]]:
+        """Get team information"""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/orgs/{org}/teams/{team_slug}"
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to get team info for {org}/{team_slug}: {e}")
+            return None
+    
+    async def get_team_pull_requests(self, org: str, team_slug: str) -> List[PullRequest]:
+        """Get all open pull requests authored by team members"""
+        members = await self.get_team_members(org, team_slug)
+        if not members:
+            return []
+        
+        # Build search query for all team members
+        authors = " ".join([f"author:{member.login}" for member in members])
+        search_query = f"{authors} type:pr state:open"
+        
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/search/issues",
+                params={
+                    "q": search_query,
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 100
+                }
+            )
+            response.raise_for_status()
+            search_data = response.json()
+            
+            pull_requests = []
+            for item in search_data.get("items", []):
+                # Extract repo name from URL
+                repo_full_name = "/".join(item["repository_url"].split("/")[-2:])
+                
+                # Get repository info
+                repository = await self.get_repository(repo_full_name)
+                if not repository:
+                    continue
+                
+                # Convert to our PR format
+                pr = await self._convert_search_result_to_pr(item, repository)
+                if pr:
+                    pull_requests.append(pr)
+            
+            return pull_requests
+        except Exception as e:
+            logger.error(f"Failed to get team pull requests for {org}/{team_slug}: {e}")
+            return []
+    
+    async def _convert_search_result_to_pr(self, item: Dict[str, Any], repository: Repository) -> Optional[PullRequest]:
+        """Convert GitHub search result to PullRequest object"""
+        try:
+            # Get detailed PR data
+            pr_number = item["number"]
+            response = await self.client.get(
+                f"{self.base_url}/repos/{repository.full_name}/pulls/{pr_number}"
+            )
+            response.raise_for_status()
+            pr_data = response.json()
+            
+            return await self._convert_pr_data(pr_data, repository)
+        except Exception as e:
+            logger.error(f"Failed to convert search result to PR: {e}")
+            return None
+    
+    async def search_user_pull_requests(self, username: str) -> List[PullRequest]:
+        """Search for open pull requests authored by a specific user"""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/search/issues",
+                params={
+                    "q": f"author:{username} type:pr state:open",
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 100
+                }
+            )
+            response.raise_for_status()
+            search_data = response.json()
+            
+            pull_requests = []
+            for item in search_data.get("items", []):
+                # Extract repo name from URL
+                repo_full_name = "/".join(item["repository_url"].split("/")[-2:])
+                
+                # Get repository info
+                repository = await self.get_repository(repo_full_name)
+                if not repository:
+                    continue
+                
+                # Convert to our PR format
+                pr = await self._convert_search_result_to_pr(item, repository)
+                if pr:
+                    pull_requests.append(pr)
+            
+            return pull_requests
+        except Exception as e:
+            logger.error(f"Failed to search pull requests for user {username}: {e}")
+            return []
+    
+    async def get_current_user_teams(self) -> List[Dict[str, Any]]:
+        """Get all teams that the current user belongs to"""
+        try:
+            # Get all organizations the user belongs to
+            response = await self.client.get(f"{self.base_url}/user/orgs")
+            response.raise_for_status()
+            orgs = response.json()
+            
+            all_teams = []
+            
+            for org in orgs:
+                org_login = org["login"]
+                try:
+                    # Get teams for this organization that the user belongs to
+                    teams_response = await self.client.get(
+                        f"{self.base_url}/user/teams",
+                        params={"org": org_login}
+                    )
+                    teams_response.raise_for_status()
+                    teams = teams_response.json()
+                    
+                    for team in teams:
+                        team_info = {
+                            "organization": org_login,
+                            "team_name": team["slug"],
+                            "team_id": team["id"],
+                            "name": team["name"],
+                            "description": team.get("description"),
+                            "privacy": team.get("privacy", "closed"),
+                            "permission": team.get("permission", "pull")
+                        }
+                        all_teams.append(team_info)
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to get teams for organization {org_login}: {e}")
+                    continue
+            
+            logger.info(f"Found {len(all_teams)} teams for current user")
+            return all_teams
+            
+        except Exception as e:
+            logger.error(f"Failed to get current user teams: {e}")
+            return []

@@ -9,8 +9,9 @@ class Settings(BaseSettings):
     
     GITHUB_API_BASE_URL: str = "https://api.github.com"
     POLLING_INTERVAL_SECONDS: int = 60
+    AUTO_SUBSCRIBE_USER_TEAMS: bool = True
     
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
+    ALLOWED_ORIGINS: List[str] = ["*"]
     
     DATABASE_URL: str = "sqlite:///./pr_monitor.db"
     

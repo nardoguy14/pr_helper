@@ -96,3 +96,30 @@ class RepositoryStats(BaseModel):
     review_requests: int
     code_owner_prs: int
     last_updated: datetime
+
+
+class TeamSubscription(BaseModel):
+    organization: str
+    team_name: str
+    watch_all_prs: bool = True
+    watch_assigned_prs: bool = True
+    watch_review_requests: bool = True
+    enabled: bool = True
+
+
+class TeamStats(BaseModel):
+    organization: str
+    team_name: str
+    total_open_prs: int
+    assigned_to_user: int
+    review_requests: int
+    last_updated: datetime
+    enabled: bool = True
+
+
+class TeamSubscriptionRequest(BaseModel):
+    organization: str
+    team_name: str
+    watch_all_prs: bool = True
+    watch_assigned_prs: bool = True
+    watch_review_requests: bool = True

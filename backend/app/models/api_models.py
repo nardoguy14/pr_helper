@@ -1,6 +1,9 @@
 from pydantic import BaseModel
 from typing import List, Optional
-from app.models.pr_models import PullRequest, RepositorySubscription, RepositoryStats
+from app.models.pr_models import (
+    PullRequest, RepositorySubscription, RepositoryStats,
+    TeamSubscription, TeamStats, TeamSubscriptionRequest
+)
 
 
 class SubscribeRepositoryRequest(BaseModel):
@@ -41,3 +44,32 @@ class UnsubscribeRepositoryResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
+
+
+# Team-related API models
+class SubscribeTeamResponse(BaseModel):
+    success: bool
+    message: str
+    subscription: Optional[TeamSubscription] = None
+
+
+class UnsubscribeTeamRequest(BaseModel):
+    organization: str
+    team_name: str
+
+
+class UnsubscribeTeamResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class GetTeamsResponse(BaseModel):
+    teams: List[TeamStats]
+    total_count: int
+
+
+class GetTeamPullRequestsResponse(BaseModel):
+    pull_requests: List[PullRequest]
+    organization: str
+    team_name: str
+    total_count: int

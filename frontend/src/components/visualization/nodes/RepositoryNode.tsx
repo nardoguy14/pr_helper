@@ -76,7 +76,16 @@ export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data }
 
   return (
     <>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle 
+        type="target" 
+        position={Position.Top} 
+        style={{ 
+          opacity: 0,
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)'
+        }} 
+      />
       <NodeContainer 
         $isExpanded={isExpanded} 
         $color={color}
@@ -92,7 +101,16 @@ export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data }
           </ReviewCount>
         )}
       </NodeContainer>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle 
+        type="source" 
+        position={Position.Bottom} 
+        style={{ 
+          opacity: 0,
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)'
+        }} 
+      />
     </>
   );
 };

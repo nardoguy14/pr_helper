@@ -1,18 +1,26 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_models import (
     SubscribeRepositoryRequest, SubscribeRepositoryResponse,
     GetRepositoriesResponse, GetPullRequestsResponse,
     UnsubscribeRepositoryRequest, UnsubscribeRepositoryResponse,
-    ErrorResponse
+    SubscribeTeamResponse, UnsubscribeTeamRequest, UnsubscribeTeamResponse,
+    GetTeamsResponse, GetTeamPullRequestsResponse, ErrorResponse
 )
-from app.models.pr_models import RepositorySubscription, RepositoryStats
+from app.models.pr_models import (
+    RepositorySubscription, RepositoryStats,
+    TeamSubscriptionRequest, TeamSubscription, TeamStats, PullRequest
+)
 from app.services.github_service import GitHubService
 from app.services.websocket_manager import websocket_manager
 from app.services.scheduler import get_scheduler
+from app.services.database_service import DatabaseService
+from app.database.database import get_db
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -130,26 +138,39 @@ async def get_subscribed_repositories():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/repositories/{repository_name}/pull-requests", response_model=GetPullRequestsResponse)
-async def get_repository_pull_requests(repository_name: str):
+@router.get("/repositories/{repository_name:path}/pull-requests", response_model=GetPullRequestsResponse)
+async def get_repository_pull_requests(
+    repository_name: str,
+    db: AsyncSession = Depends(get_db)
+):
     try:
+        # URL decode the repository name (FastAPI should do this automatically, but let's be explicit)
+        from urllib.parse import unquote
+        decoded_repo_name = unquote(repository_name)
+        
         scheduler = get_scheduler()
         subscribed_repos = scheduler.get_subscribed_repositories()
         
-        if repository_name not in subscribed_repos:
+        if decoded_repo_name not in subscribed_repos:
             raise HTTPException(
                 status_code=404,
-                detail=f"Not subscribed to repository '{repository_name}'"
+                detail=f"Not subscribed to repository '{decoded_repo_name}'"
             )
         
-        async with GitHubService() as github_service:
-            prs = await github_service.get_pull_requests(repository_name)
-            
-            return GetPullRequestsResponse(
-                pull_requests=prs,
-                repository_name=repository_name,
-                total_count=len(prs)
-            )
+        # Read PRs from database
+        db_service = DatabaseService(db)
+        pr_dicts = await db_service.get_repository_pull_requests(decoded_repo_name)
+        
+        # Convert dicts back to PullRequest models
+        prs = [PullRequest(**pr_dict) for pr_dict in pr_dicts]
+        
+        logger.info(f"Returning {len(prs)} PRs from database for repository {decoded_repo_name}")
+        
+        return GetPullRequestsResponse(
+            pull_requests=prs,
+            repository_name=decoded_repo_name,
+            total_count=len(prs)
+        )
     
     except HTTPException:
         raise
@@ -158,21 +179,24 @@ async def get_repository_pull_requests(repository_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/repositories/{repository_name}/refresh")
+@router.post("/repositories/{repository_name:path}/refresh")
 async def refresh_repository(repository_name: str):
     try:
+        from urllib.parse import unquote
+        decoded_repo_name = unquote(repository_name)
+        
         scheduler = get_scheduler()
         subscribed_repos = scheduler.get_subscribed_repositories()
         
-        if repository_name not in subscribed_repos:
+        if decoded_repo_name not in subscribed_repos:
             raise HTTPException(
                 status_code=404,
-                detail=f"Not subscribed to repository '{repository_name}'"
+                detail=f"Not subscribed to repository '{decoded_repo_name}'"
             )
         
-        await scheduler.force_refresh_repository(repository_name)
+        await scheduler.force_refresh_repository(decoded_repo_name)
         
-        return {"success": True, "message": f"Repository '{repository_name}' refreshed successfully"}
+        return {"success": True, "message": f"Repository '{decoded_repo_name}' refreshed successfully"}
     
     except HTTPException:
         raise
@@ -194,3 +218,332 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")
         websocket_manager.disconnect(user_id)
+
+
+# Team API Endpoints
+@router.post("/teams/subscribe", response_model=SubscribeTeamResponse)
+async def subscribe_to_team(request: TeamSubscriptionRequest):
+    """Subscribe to a GitHub team to monitor their pull requests"""
+    try:
+        async with GitHubService() as github_service:
+            # Verify team exists and is accessible
+            team_info = await github_service.get_team_info(request.organization, request.team_name)
+            if not team_info:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Team '{request.organization}/{request.team_name}' not found or not accessible"
+                )
+            
+            # Check if we can access team members
+            members = await github_service.get_team_members(request.organization, request.team_name)
+            if not members:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Cannot access members of team '{request.organization}/{request.team_name}'. Check permissions."
+                )
+            
+            subscription = TeamSubscription(
+                organization=request.organization,
+                team_name=request.team_name,
+                watch_all_prs=request.watch_all_prs,
+                watch_assigned_prs=request.watch_assigned_prs,
+                watch_review_requests=request.watch_review_requests
+            )
+            
+            # Store subscription in database
+            async for db in get_db():
+                db_service = DatabaseService(db)
+                await db_service.create_team_subscription(request)
+                break
+            
+            # Add to scheduler for real-time monitoring
+            scheduler = get_scheduler()
+            scheduler.add_team_subscription(subscription)
+            
+            return SubscribeTeamResponse(
+                success=True,
+                message=f"Successfully subscribed to team '{request.organization}/{request.team_name}'",
+                subscription=subscription
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error subscribing to team {request.organization}/{request.team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/teams/unsubscribe", response_model=UnsubscribeTeamResponse)
+async def unsubscribe_from_team(request: UnsubscribeTeamRequest):
+    """Unsubscribe from a GitHub team"""
+    try:
+        # Remove from scheduler
+        scheduler = get_scheduler()
+        team_key = f"{request.organization}/{request.team_name}"
+        if team_key not in scheduler.get_subscribed_teams():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Not subscribed to team '{request.organization}/{request.team_name}'"
+            )
+        
+        scheduler.remove_team_subscription(request.organization, request.team_name)
+        
+        # Remove from database
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            success = await db_service.delete_team_subscription(request.organization, request.team_name)
+            if not success:
+                logger.warning(f"Team subscription not found in database: {team_key}")
+            break
+        
+        return UnsubscribeTeamResponse(
+            success=True,
+            message=f"Successfully unsubscribed from team '{request.organization}/{request.team_name}'"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error unsubscribing from team {request.organization}/{request.team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/teams", response_model=GetTeamsResponse)
+async def get_subscribed_teams():
+    """Get all subscribed teams with their statistics"""
+    try:
+        # Get team stats from database (updated by scheduler)
+        teams = []
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            teams = await db_service.get_all_team_stats()
+            break
+        
+        return GetTeamsResponse(
+            teams=teams,
+            total_count=len(teams)
+        )
+    
+    except Exception as e:
+        logger.error(f"Error getting subscribed teams: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/teams/auto-subscribe")
+async def auto_subscribe_to_user_teams():
+    """Automatically subscribe to all teams the current user belongs to"""
+    try:
+        scheduler = get_scheduler()
+        await scheduler._auto_subscribe_user_teams()
+        
+        return {
+            "success": True,
+            "message": "Successfully auto-subscribed to user teams"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error auto-subscribing to user teams: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/teams/available")
+async def get_available_teams():
+    """Get teams the user belongs to but hasn't subscribed to yet"""
+    try:
+        async with GitHubService() as github_service:
+            user_teams = await github_service.get_current_user_teams()
+        
+        scheduler = get_scheduler()
+        subscribed_teams = scheduler.get_subscribed_teams()
+        
+        available_teams = []
+        for team_info in user_teams:
+            team_key = f"{team_info['organization']}/{team_info['team_name']}"
+            if team_key not in subscribed_teams:
+                available_teams.append({
+                    "organization": team_info["organization"],
+                    "team_name": team_info["team_name"],
+                    "name": team_info["name"],
+                    "description": team_info.get("description"),
+                    "privacy": team_info.get("privacy", "closed")
+                })
+        
+        return {
+            "teams": available_teams,
+            "total_count": len(available_teams)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting available teams: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/user/info")
+async def get_user_info():
+    """Get current user information and team memberships"""
+    try:
+        async with GitHubService() as github_service:
+            current_user = await github_service.get_current_user()
+            user_teams = await github_service.get_current_user_teams()
+        
+        scheduler = get_scheduler()
+        subscribed_teams = scheduler.get_subscribed_teams()
+        
+        return {
+            "user": current_user.model_dump() if current_user else None,
+            "teams": user_teams,
+            "subscribed_teams": subscribed_teams,
+            "auto_subscribe_enabled": settings.AUTO_SUBSCRIBE_USER_TEAMS
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/teams/{organization}/{team_name}/enable")
+async def enable_team_subscription(organization: str, team_name: str):
+    """Enable a team subscription"""
+    try:
+        # Check if team subscription exists
+        team_key = f"{organization}/{team_name}"
+        scheduler = get_scheduler()
+        if team_key not in scheduler.get_subscribed_teams():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Team subscription '{organization}/{team_name}' not found"
+            )
+        
+        # Enable in database
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            success = await db_service.enable_team_subscription(organization, team_name)
+            if not success:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Team subscription '{organization}/{team_name}' not found in database"
+                )
+            break
+        
+        # Update scheduler
+        subscription = scheduler.subscribed_teams[team_key]
+        subscription.enabled = True
+        
+        return {
+            "success": True,
+            "message": f"Team subscription '{organization}/{team_name}' enabled successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error enabling team subscription {organization}/{team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/teams/{organization}/{team_name}/disable")
+async def disable_team_subscription(organization: str, team_name: str):
+    """Disable a team subscription"""
+    try:
+        # Check if team subscription exists
+        team_key = f"{organization}/{team_name}"
+        scheduler = get_scheduler()
+        if team_key not in scheduler.get_subscribed_teams():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Team subscription '{organization}/{team_name}' not found"
+            )
+        
+        # Disable in database
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            success = await db_service.disable_team_subscription(organization, team_name)
+            if not success:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Team subscription '{organization}/{team_name}' not found in database"
+                )
+            break
+        
+        # Update scheduler
+        subscription = scheduler.subscribed_teams[team_key]
+        subscription.enabled = False
+        
+        return {
+            "success": True,
+            "message": f"Team subscription '{organization}/{team_name}' disabled successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error disabling team subscription {organization}/{team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/teams/{organization}/{team_name}/pull-requests", response_model=GetTeamPullRequestsResponse)
+async def get_team_pull_requests(
+    organization: str, 
+    team_name: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all pull requests for a specific team"""
+    try:
+        scheduler = get_scheduler()
+        team_key = f"{organization}/{team_name}"
+        
+        # Check if subscribed to this team
+        if team_key not in scheduler.get_subscribed_teams():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Not subscribed to team '{organization}/{team_name}'"
+            )
+        
+        # Read PRs from database
+        db_service = DatabaseService(db)
+        pr_dicts = await db_service.get_team_pull_requests(team_key)
+        
+        # Convert dicts back to PullRequest models
+        prs = [PullRequest(**pr_dict) for pr_dict in pr_dicts]
+        
+        logger.info(f"Returning {len(prs)} PRs from database for team {team_key}")
+        
+        return GetTeamPullRequestsResponse(
+            pull_requests=prs,
+            organization=organization,
+            team_name=team_name,
+            total_count=len(prs)
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting pull requests for team {organization}/{team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/teams/{organization}/{team_name}/refresh")
+async def refresh_team(organization: str, team_name: str):
+    """Force refresh team pull requests"""
+    try:
+        # Check if subscribed and refresh
+        scheduler = get_scheduler()
+        team_key = f"{organization}/{team_name}"
+        if team_key not in scheduler.get_subscribed_teams():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Not subscribed to team '{organization}/{team_name}'"
+            )
+        
+        await scheduler.force_refresh_team(organization, team_name)
+        
+        return {
+            "success": True, 
+            "message": f"Team '{organization}/{team_name}' refreshed successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing team {organization}/{team_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

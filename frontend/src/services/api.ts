@@ -4,7 +4,13 @@ import {
   PullRequest,
   SubscribeRepositoryRequest,
   ApiResponse,
-  RepositorySubscription
+  RepositorySubscription,
+  TeamSubscriptionRequest,
+  TeamSubscription,
+  TeamStats,
+  SubscribeTeamResponse,
+  GetTeamsResponse,
+  GetTeamPullRequestsResponse
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
@@ -81,6 +87,52 @@ class ApiService {
   async refreshRepository(repositoryName: string): Promise<{ success: boolean; message: string }> {
     return this.handleRequest(
       axios.post(this.getUrl(`/repositories/${encodeURIComponent(repositoryName)}/refresh`))
+    );
+  }
+
+  // Team Management
+  async subscribeToTeam(request: TeamSubscriptionRequest): Promise<SubscribeTeamResponse> {
+    return this.handleRequest(
+      axios.post(this.getUrl('/teams/subscribe'), request)
+    );
+  }
+
+  async unsubscribeFromTeam(organization: string, teamName: string): Promise<{ success: boolean; message: string }> {
+    return this.handleRequest(
+      axios.post(this.getUrl('/teams/unsubscribe'), {
+        organization,
+        team_name: teamName
+      })
+    );
+  }
+
+  async getSubscribedTeams(): Promise<GetTeamsResponse> {
+    return this.handleRequest(
+      axios.get(this.getUrl('/teams'))
+    );
+  }
+
+  async getTeamPullRequests(organization: string, teamName: string): Promise<GetTeamPullRequestsResponse> {
+    return this.handleRequest(
+      axios.get(this.getUrl(`/teams/${encodeURIComponent(organization)}/${encodeURIComponent(teamName)}/pull-requests`))
+    );
+  }
+
+  async refreshTeam(organization: string, teamName: string): Promise<{ success: boolean; message: string }> {
+    return this.handleRequest(
+      axios.post(this.getUrl(`/teams/${encodeURIComponent(organization)}/${encodeURIComponent(teamName)}/refresh`))
+    );
+  }
+
+  async enableTeam(organization: string, teamName: string): Promise<{ success: boolean; message: string }> {
+    return this.handleRequest(
+      axios.post(this.getUrl(`/teams/${encodeURIComponent(organization)}/${encodeURIComponent(teamName)}/enable`))
+    );
+  }
+
+  async disableTeam(organization: string, teamName: string): Promise<{ success: boolean; message: string }> {
+    return this.handleRequest(
+      axios.post(this.getUrl(`/teams/${encodeURIComponent(organization)}/${encodeURIComponent(teamName)}/disable`))
     );
   }
 

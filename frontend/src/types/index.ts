@@ -178,3 +178,63 @@ export const PR_STATE_COLORS = {
   [PRState.CLOSED]: "#f85149", // Red
   [PRState.MERGED]: "#8957e5", // Purple
 } as const;
+
+// Team Subscription Types
+export interface TeamSubscription {
+  organization: string;
+  team_name: string;
+  watch_all_prs: boolean;
+  watch_assigned_prs: boolean;
+  watch_review_requests: boolean;
+}
+
+export interface TeamStats {
+  organization: string;
+  team_name: string;
+  total_open_prs: number;
+  assigned_to_user: number;
+  review_requests: number;
+  last_updated: string;
+  enabled: boolean;
+}
+
+export interface TeamSubscriptionRequest {
+  organization: string;
+  team_name: string;
+  watch_all_prs?: boolean;
+  watch_assigned_prs?: boolean;
+  watch_review_requests?: boolean;
+}
+
+// Subscription Types
+export type SubscriptionType = 'repository' | 'team';
+
+export interface SubscriptionItem {
+  type: SubscriptionType;
+  id: string; // repo name or org/team
+  data: RepositoryStats | TeamStats;
+}
+
+// API Response Types for Teams
+export interface SubscribeTeamResponse {
+  success: boolean;
+  message: string;
+  subscription?: TeamSubscription;
+}
+
+export interface UnsubscribeTeamRequest {
+  organization: string;
+  team_name: string;
+}
+
+export interface GetTeamsResponse {
+  teams: TeamStats[];
+  total_count: number;
+}
+
+export interface GetTeamPullRequestsResponse {
+  pull_requests: PullRequest[];
+  organization: string;
+  team_name: string;
+  total_count: number;
+}

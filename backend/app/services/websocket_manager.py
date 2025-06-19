@@ -12,12 +12,14 @@ logger = logging.getLogger(__name__)
 class WebSocketManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-        self.user_subscriptions: Dict[str, Set[str]] = {}
+        self.user_subscriptions: Dict[str, Set[str]] = {}  # repo subscriptions
+        self.user_team_subscriptions: Dict[str, Set[str]] = {}  # team subscriptions
     
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
         self.active_connections[user_id] = websocket
         self.user_subscriptions[user_id] = set()
+        self.user_team_subscriptions[user_id] = set()
         logger.info(f"WebSocket connection established for user: {user_id}")
         
         await self.send_message(user_id, WebSocketMessage(
@@ -30,6 +32,8 @@ class WebSocketManager:
             del self.active_connections[user_id]
         if user_id in self.user_subscriptions:
             del self.user_subscriptions[user_id]
+        if user_id in self.user_team_subscriptions:
+            del self.user_team_subscriptions[user_id]
         logger.info(f"WebSocket connection closed for user: {user_id}")
     
     async def send_message(self, user_id: str, message: WebSocketMessage):
@@ -44,6 +48,11 @@ class WebSocketManager:
     async def broadcast_to_subscribers(self, repository_name: str, message: WebSocketMessage):
         for user_id, subscriptions in self.user_subscriptions.items():
             if repository_name in subscriptions:
+                await self.send_message(user_id, message)
+    
+    async def broadcast_to_team_subscribers(self, team_key: str, message: WebSocketMessage):
+        for user_id, team_subscriptions in self.user_team_subscriptions.items():
+            if team_key in team_subscriptions:
                 await self.send_message(user_id, message)
     
     async def broadcast_to_all(self, message: WebSocketMessage):
@@ -68,8 +77,22 @@ class WebSocketManager:
             self.user_subscriptions[user_id].discard(repository_name)
             logger.info(f"User {user_id} unsubscribed from repository: {repository_name}")
     
+    def subscribe_to_team(self, user_id: str, team_key: str):
+        if user_id not in self.user_team_subscriptions:
+            self.user_team_subscriptions[user_id] = set()
+        self.user_team_subscriptions[user_id].add(team_key)
+        logger.info(f"User {user_id} subscribed to team: {team_key}")
+    
+    def unsubscribe_from_team(self, user_id: str, team_key: str):
+        if user_id in self.user_team_subscriptions:
+            self.user_team_subscriptions[user_id].discard(team_key)
+            logger.info(f"User {user_id} unsubscribed from team: {team_key}")
+    
     def get_user_subscriptions(self, user_id: str) -> Set[str]:
         return self.user_subscriptions.get(user_id, set())
+    
+    def get_user_team_subscriptions(self, user_id: str) -> Set[str]:
+        return self.user_team_subscriptions.get(user_id, set())
     
     def get_connected_users(self) -> List[str]:
         return list(self.active_connections.keys())
@@ -97,6 +120,29 @@ class WebSocketManager:
             }
         )
         await self.broadcast_to_subscribers(repository_name, message)
+    
+    async def send_team_pr_update(self, team_key: str, pr_data: dict, update_type: str):
+        message = WebSocketMessage(
+            type="team_pr_update",
+            data={
+                "team": team_key,
+                "update_type": update_type,
+                "pull_request": pr_data
+            }
+        )
+        await self.broadcast_to_team_subscribers(team_key, message)
+    
+    async def send_team_stats_update(self, organization: str, team_name: str, stats: dict):
+        team_key = f"{organization}/{team_name}"
+        message = WebSocketMessage(
+            type="team_stats_update",
+            data={
+                "organization": organization,
+                "team_name": team_name,
+                "stats": stats
+            }
+        )
+        await self.broadcast_to_team_subscribers(team_key, message)
     
     async def send_error(self, user_id: str, error_message: str, error_type: str = "general_error"):
         message = WebSocketMessage(
