@@ -1,6 +1,6 @@
 import React from 'react';
 import styled from 'styled-components';
-import { Bell, GitPullRequest, Clock } from 'lucide-react';
+import { Bell, GitPullRequest } from 'lucide-react';
 import { PullRequest } from '../../types';
 
 interface NotificationsPanelProps {
@@ -89,6 +89,17 @@ const NotificationTitle = styled.div`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+`;
+
+const TimeAgo = styled.span`
+  font-size: 12px;
+  color: #586069;
+  font-weight: normal;
+  flex-shrink: 0;
 `;
 
 const NotificationMeta = styled.div`
@@ -165,13 +176,13 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
                 </NotificationIcon>
                 <NotificationDetails>
                   <NotificationTitle>
-                    #{pr.number}: {pr.title}
+                    <span>#{pr.number}: {pr.title}</span>
+                    <TimeAgo>{formatTimeAgo(pr.created_at)}</TimeAgo>
                   </NotificationTitle>
                   <NotificationMeta>
                     <RepositoryName>{pr.repositoryName}</RepositoryName>
                     <span>•</span>
-                    <Clock size={12} />
-                    <span>{formatTimeAgo(pr.created_at)}</span>
+                    <span>by {pr.user.login}</span>
                   </NotificationMeta>
                 </NotificationDetails>
               </NotificationContent>
