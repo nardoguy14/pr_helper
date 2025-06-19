@@ -1,0 +1,180 @@
+// PR and GitHub Types
+export interface User {
+  id: number;
+  login: string;
+  avatar_url: string;
+  html_url: string;
+}
+
+export interface Repository {
+  id: number;
+  name: string;
+  full_name: string;
+  html_url: string;
+  description?: string;
+  private: boolean;
+}
+
+export enum PRState {
+  OPEN = "open",
+  CLOSED = "closed",
+  MERGED = "merged"
+}
+
+export enum ReviewState {
+  PENDING = "pending",
+  APPROVED = "approved",
+  CHANGES_REQUESTED = "changes_requested",
+  DISMISSED = "dismissed"
+}
+
+export enum PRStatus {
+  NEEDS_REVIEW = "needs_review",
+  REVIEWED = "reviewed",
+  WAITING_FOR_CHANGES = "waiting_for_changes",
+  READY_TO_MERGE = "ready_to_merge"
+}
+
+export interface Review {
+  id: number;
+  user: User;
+  state: ReviewState;
+  submitted_at?: string;
+  body?: string;
+}
+
+export interface PullRequest {
+  id: number;
+  number: number;
+  title: string;
+  body?: string;
+  state: PRState;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at?: string;
+  merged_at?: string;
+  user: User;
+  assignees: User[];
+  requested_reviewers: User[];
+  reviews: Review[];
+  repository: Repository;
+  draft: boolean;
+  mergeable?: boolean;
+  status: PRStatus;
+  user_has_reviewed: boolean;
+  user_is_assigned: boolean;
+  user_is_requested_reviewer: boolean;
+}
+
+export interface RepositorySubscription {
+  repository_name: string;
+  watch_all_prs: boolean;
+  watch_assigned_prs: boolean;
+  watch_review_requests: boolean;
+  watch_code_owner_prs: boolean;
+  teams: string[];
+}
+
+export interface RepositoryStats {
+  repository: Repository;
+  total_open_prs: number;
+  assigned_to_user: number;
+  review_requests: number;
+  code_owner_prs: number;
+  last_updated: string;
+}
+
+// WebSocket Message Types
+export interface WebSocketMessage {
+  type: string;
+  data: any;
+  timestamp: string;
+}
+
+export interface PRUpdateMessage extends WebSocketMessage {
+  type: "pr_update";
+  data: {
+    repository: string;
+    update_type: "new_pr" | "updated" | "closed";
+    pull_request: PullRequest;
+  };
+}
+
+export interface RepositoryStatsUpdateMessage extends WebSocketMessage {
+  type: "repository_stats_update";
+  data: {
+    repository: string;
+    stats: {
+      total_open_prs: number;
+      assigned_to_user: number;
+      review_requests: number;
+      needs_review: number;
+      last_updated: string;
+    };
+  };
+}
+
+// API Request/Response Types
+export interface SubscribeRepositoryRequest {
+  repository_name: string;
+  watch_all_prs?: boolean;
+  watch_assigned_prs?: boolean;
+  watch_review_requests?: boolean;
+  watch_code_owner_prs?: boolean;
+  teams?: string[];
+}
+
+export interface ApiResponse<T> {
+  success?: boolean;
+  message?: string;
+  data?: T;
+  error?: string;
+  detail?: string;
+}
+
+// Visualization Types
+export interface NodeData {
+  id: string;
+  type: "repository" | "pullRequest";
+  data: Repository | PullRequest;
+  x?: number;
+  y?: number;
+  fx?: number;
+  fy?: number;
+}
+
+export interface LinkData {
+  source: string | NodeData;
+  target: string | NodeData;
+  type: "contains" | "reviews" | "assigns";
+}
+
+export interface GraphData {
+  nodes: NodeData[];
+  links: LinkData[];
+}
+
+// UI State Types
+export interface AppState {
+  repositories: RepositoryStats[];
+  selectedRepository: string | null;
+  pullRequests: PullRequest[];
+  isConnected: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+// Color scheme for PR statuses (GitHub-style)
+export const PR_STATUS_COLORS = {
+  [PRStatus.NEEDS_REVIEW]: "#f1c21b", // Yellow - needs review
+  [PRStatus.REVIEWED]: "#198038", // Green - reviewed
+  [PRStatus.WAITING_FOR_CHANGES]: "#da1e28", // Red - changes needed
+  [PRStatus.READY_TO_MERGE]: "#0f62fe", // Blue - ready to merge
+} as const;
+
+export const PR_STATE_COLORS = {
+  [PRState.OPEN]: "#238636", // Green
+  [PRState.CLOSED]: "#f85149", // Red
+  [PRState.MERGED]: "#8957e5", // Purple
+} as const;
