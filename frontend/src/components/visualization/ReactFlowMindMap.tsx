@@ -110,7 +110,7 @@ const nodeTypes: NodeTypes = {
   pr: PRNode,
 };
 
-export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
+const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
   repositories,
   teams,
   onRepositoryClick,
@@ -287,7 +287,8 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
         // Get team position from the existing node
         const teamX = teamNode.position.x;
         const teamY = teamNode.position.y;
-        const baseRepoRadius = 250; // Increased base radius
+        // Adaptive radius based on number of repos - less distance for fewer nodes
+        const baseRepoRadius = Math.min(250, 120 + (teamRepos.length * 20));
         
         // Calculate center of visualization
         const centerX = width / 2;
@@ -323,9 +324,8 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
             const angleStep = teamRepos.length > 1 ? spreadAngle / (teamRepos.length - 1) : 0;
             const repoAngle = baseAngle - spreadAngle/2 + (repoIndex * angleStep);
             
-            // Dynamic radius based on number of repos - more repos = larger radius
-            const radiusMultiplier = 1 + (teamRepos.length * 0.1); // 10% increase per repo
-            const dynamicRepoRadius = baseRepoRadius * radiusMultiplier;
+            // Dynamic radius based on number of repos
+            const dynamicRepoRadius = baseRepoRadius;
             
             // Check if this angle would collide with other teams
             let finalAngle = repoAngle;
@@ -591,10 +591,9 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
             baseAngle = Math.atan2(dy, dx);
           }
 
-          // Dynamic radius based on number of PRs to prevent overlap
-          // Increased base radius and scaling factor
-          const basePRRadius = 200; // Increased from 150
-          const prRadius = basePRRadius + (prs.length * 25); // Increased from 15 to 25 per PR
+          // Dynamic radius based on number of PRs - more compact for fewer PRs
+          const basePRRadius = Math.min(200, 120 + (prs.length * 15));
+          const prRadius = basePRRadius;
           
           // Calculate optimal spread for PRs
           const minAnglePerPR = Math.PI / 12; // 15 degrees minimum per PR
@@ -796,9 +795,9 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{
-          padding: 100,
-          minZoom: 1.2,
-          maxZoom: 3.0,
+          padding: 0.1,
+          minZoom: 0.3,
+          maxZoom: 2.0,
         }}
         attributionPosition="bottom-left"
       >
@@ -841,3 +840,6 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
     </Container>
   );
 };
+
+// Export the component
+export const ReactFlowMindMap = ReactFlowMindMapInner;

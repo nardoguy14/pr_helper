@@ -289,7 +289,7 @@ const SectionTitle = styled.h3`
 function App() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentView, setCurrentView] = useState<'mindmap' | 'pr-graph'>('mindmap');
-  const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(false);
+  const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
   const [expandedRepositoryNodes, setExpandedRepositoryNodes] = useState<Set<string>>(new Set());
@@ -346,7 +346,7 @@ function App() {
 
   const { isConnected, error: wsError } = useWebSocket(
     // Handle PR updates
-    useCallback((data: any) => {
+    useCallback(async (data: any) => {
       const { repository, update_type, pull_request } = data;
       
       // Update PRs for any repository we have data for
@@ -360,6 +360,10 @@ function App() {
             updatePullRequest(repository, pull_request);
             break;
         }
+        
+        // Show notification for PR updates
+        const { NotificationService } = await import('./services/notifications');
+        await NotificationService.notifyPRUpdate(pull_request, update_type);
       }
     }, [allPullRequests, addPullRequest, updatePullRequest]),
     
@@ -377,6 +381,13 @@ function App() {
       fetchPullRequestsForAllRepositories(repositoryNames);
     }
   }, [repositories, reposLoading, fetchPullRequestsForAllRepositories]);
+
+  // Request notification permissions on app start
+  useEffect(() => {
+    import('./services/notifications').then(({ NotificationService }) => {
+      NotificationService.requestPermission();
+    });
+  }, []);
 
   // Close notifications dropdown when clicking outside
   useEffect(() => {
@@ -653,8 +664,9 @@ function App() {
     setCurrentView('mindmap');
   };
 
-  const handlePRClick = useCallback((pr: PullRequest) => {
-    window.open(pr.html_url, '_blank');
+  const handlePRClick = useCallback(async (pr: PullRequest) => {
+    const { openExternal } = await import('./utils/electron');
+    await openExternal(pr.html_url);
   }, []);
 
   // Get all PRs from both repositories and teams

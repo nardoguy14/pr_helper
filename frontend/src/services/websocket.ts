@@ -86,10 +86,17 @@ class WebSocketService {
           }
         };
 
-        this.ws.onclose = () => {
-          console.log('WebSocket disconnected');
+        this.ws.onclose = (event) => {
+          console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
           this.isConnecting = false;
           this.ws = null;
+          
+          // Only show error if connection was not clean
+          if (!event.wasClean) {
+            const errorMsg = `WebSocket connection failed (code: ${event.code})`;
+            this.eventHandlers.onError?.(errorMsg);
+          }
+          
           this.eventHandlers.onDisconnect?.();
           
           if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -98,14 +105,13 @@ class WebSocketService {
         };
 
         this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
+          console.error('WebSocket error event');
           console.error('WebSocket readyState:', this.ws?.readyState);
           console.error('WebSocket URL was:', this.url);
-          console.error('Error event:', error);
-          console.error('WebSocket object:', this.ws);
+          console.error('Error details:', error);
           this.isConnecting = false;
-          this.eventHandlers.onError?.('WebSocket connection error');
-          reject(error);
+          // Don't reject on error event, wait for close event
+          // The error event doesn't provide useful information
         };
 
       } catch (error) {
