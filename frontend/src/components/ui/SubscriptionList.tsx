@@ -317,9 +317,6 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
                   </SubscriptionTitle>
                   <TypeBadge $type="team">Team</TypeBadge>
                 </SubscriptionMeta>
-                <SubscriptionDescription>
-                  Monitor pull requests from team members
-                </SubscriptionDescription>
               </div>
             </SubscriptionName>
             

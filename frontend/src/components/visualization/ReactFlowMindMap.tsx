@@ -23,7 +23,7 @@ import { PRNode } from './nodes/PRNode';
 interface ReactFlowMindMapProps {
   repositories: RepositoryStats[];
   teams: TeamStats[];
-  onRepositoryClick: (repositoryName: string) => void;
+  onRepositoryClick: (nodeId: string, repositoryName: string) => void;
   onTeamClick: (organization: string, teamName: string) => void;
   onPRClick?: (pr: PullRequest) => void;
   expandedRepositories: Set<string>;
@@ -144,58 +144,118 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
     };
   }, []);
 
-  // Initialize team nodes only once
+  // Initialize and update nodes (teams and direct repositories)
   useEffect(() => {
-    // Only create team nodes if team nodes don't already exist
-    if (reactFlowNodes.some(node => node.type === 'team')) {
-      console.log('Team nodes already exist, skipping initialization');
-      return;
-    }
-    
     const centerX = width / 2;
     const centerY = height / 2;
-    const teamRadius = Math.min(width, height) * 0.3;
+    const teamRadius = Math.min(width, height) * 0.35; // Increased to give more space between teams
+    const repoRadius = Math.min(width, height) * 0.5; // Further increased to prevent overlap
     
-    const newTeamNodes = teams.map((team, teamIndex) => {
-      const teamKey = `${team.organization}/${team.team_name}`;
-      const teamAngle = (teamIndex / teams.length) * 2 * Math.PI;
-      const teamX = centerX + Math.cos(teamAngle) * teamRadius;
-      const teamY = centerY + Math.sin(teamAngle) * teamRadius;
-
-      return {
-        id: teamKey,
-        type: 'team',
-        position: { x: teamX, y: teamY },
-        data: {
-          team: team,
-          isExpanded: expandedTeams.has(teamKey),
-          onClick: onTeamClick,
-        },
-        sourcePosition: Position.Bottom,
-        targetPosition: Position.Top,
-        className: 'node-visible',
-      };
+    setNodes(currentNodes => {
+      const nodeMap = new Map(currentNodes.map(node => [node.id, node]));
+      const updatedNodes: Node[] = [];
+      
+      // Update or add team nodes
+      teams.forEach((team, teamIndex) => {
+        const teamKey = `${team.organization}/${team.team_name}`;
+        const existingNode = nodeMap.get(teamKey);
+        
+        if (existingNode) {
+          // Update existing node data
+          updatedNodes.push({
+            ...existingNode,
+            data: {
+              ...existingNode.data,
+              team: team,
+              isExpanded: expandedTeams.has(teamKey),
+            },
+          });
+        } else {
+          // Create new node
+          const teamAngle = (teamIndex / teams.length) * 2 * Math.PI;
+          const teamX = centerX + Math.cos(teamAngle) * teamRadius;
+          const teamY = centerY + Math.sin(teamAngle) * teamRadius;
+          
+          updatedNodes.push({
+            id: teamKey,
+            type: 'team',
+            position: { x: teamX, y: teamY },
+            data: {
+              team: team,
+              isExpanded: expandedTeams.has(teamKey),
+              onClick: onTeamClick,
+            },
+            sourcePosition: Position.Bottom,
+            targetPosition: Position.Top,
+            className: 'node-visible',
+          });
+        }
+      });
+      
+      // Update or add direct repository nodes (not from teams)
+      repositories.forEach((repo, repoIndex) => {
+        const repoId = repo.repository.full_name;
+        const existingNode = nodeMap.get(repoId);
+        
+        if (existingNode) {
+          // Update existing node data
+          updatedNodes.push({
+            ...existingNode,
+            data: {
+              ...existingNode.data,
+              repository: repo,
+              isExpanded: expandedRepositories.has(repoId),
+            },
+          });
+        } else {
+          // Create new node
+          const startAngle = teams.length > 0 ? Math.PI * 0.25 : 0;
+          const angleRange = Math.PI * 1.5;
+          const repoAngle = repositories.length === 1 
+            ? startAngle + angleRange / 2 
+            : startAngle + (repoIndex / (repositories.length - 1)) * angleRange;
+          const repoX = centerX + Math.cos(repoAngle) * repoRadius;
+          const repoY = centerY + Math.sin(repoAngle) * repoRadius;
+          
+          updatedNodes.push({
+            id: repoId,
+            type: 'repository',
+            position: { x: repoX, y: repoY },
+            data: {
+              repository: repo,
+              isExpanded: expandedRepositories.has(repoId),
+              onClick: onRepositoryClick,
+            },
+            sourcePosition: Position.Bottom,
+            targetPosition: Position.Top,
+            className: 'node-visible',
+          });
+        }
+      });
+      
+      // Preserve other nodes (team repos, PRs) that aren't being updated
+      currentNodes.forEach(node => {
+        if (node.type !== 'team' && !repositories.some(r => r.repository.full_name === node.id)) {
+          // This is a team repository node or PR node, preserve it
+          if (node.id.includes('-repo-') || node.id.includes('-pr-')) {
+            updatedNodes.push(node);
+          }
+        }
+      });
+      
+      console.log('Updating nodes:', updatedNodes.length, 'teams:', teams.length, 'direct repos:', repositories.length);
+      return updatedNodes;
     });
-    
-    console.log('Initializing team nodes:', newTeamNodes.length);
-    setNodes(newTeamNodes);
-    setInitializedTeams(new Set(teams.map(t => `${t.organization}/${t.team_name}`)));
-  }, [teams, width, height, onTeamClick]); // Removed reactFlowNodes from deps to avoid circular dependency
+  }, [teams, repositories, width, height, onTeamClick, onRepositoryClick, expandedTeams, expandedRepositories]);
 
   // Track previous expanded teams to detect actual collapses
   const [prevExpandedTeams, setPrevExpandedTeams] = useState<Set<string>>(new Set());
 
-  // Handle team expansion/collapse by adding/removing nodes incrementally
+  // Handle team expansion/collapse by adding/removing repository nodes from teams
   useEffect(() => {
     console.log('=== TEAM EXPANSION USEEFFECT START ===');
     console.log('expandedTeams:', Array.from(expandedTeams));
     console.log('prevExpandedTeams:', Array.from(prevExpandedTeams));
-    
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const teamRadius = Math.min(width, height) * 0.3;
-    // Dynamic radius for repository nodes to prevent overlap
-    const repoRadius = 200;
 
     // Find teams that were just expanded (not in prev but in current)
     const newlyExpandedTeams = Array.from(expandedTeams).filter(team => !prevExpandedTeams.has(team));
@@ -210,32 +270,83 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
       const team = teams.find(t => `${t.organization}/${t.team_name}` === teamKey);
       if (!team) return;
 
-      const teamIndex = teams.findIndex(t => `${t.organization}/${t.team_name}` === teamKey);
-      const teamAngle = (teamIndex / teams.length) * 2 * Math.PI;
-      const teamX = centerX + Math.cos(teamAngle) * teamRadius;
-      const teamY = centerY + Math.sin(teamAngle) * teamRadius;
-
       const teamRepos = teamRepositories[teamKey] || [];
       console.log('Team repositories for', teamKey, ':', teamRepos);
       
       // Add repository nodes for this team
       setNodes(currentNodes => {
+        const teamNode = currentNodes.find(node => node.id === teamKey && node.type === 'team');
+        if (!teamNode) {
+          console.warn('Could not find team node for:', teamKey);
+          return currentNodes;
+        }
+        
         const hasRepoNodes = currentNodes.some(node => node.id.includes(`${teamKey}-repo-`));
         if (hasRepoNodes) return currentNodes; // Already have repo nodes for this team
+        
+        // Get team position from the existing node
+        const teamX = teamNode.position.x;
+        const teamY = teamNode.position.y;
+        const baseRepoRadius = 250; // Increased base radius
+        
+        // Calculate center of visualization
+        const centerX = width / 2;
+        const centerY = height / 2;
+        
+        // Calculate angle from center to this team to determine outward direction
+        const teamAngleFromCenter = Math.atan2(teamY - centerY, teamX - centerX);
+        
+        // Find other team nodes to avoid collision
+        const otherTeamNodes = currentNodes.filter(node => 
+          node.type === 'team' && node.id !== teamKey
+        );
+        
+        // Calculate angles to avoid other teams
+        const anglesToAvoid = otherTeamNodes.map(otherTeam => {
+          const angleToOther = Math.atan2(
+            otherTeam.position.y - teamY,
+            otherTeam.position.x - teamX
+          );
+          return angleToOther;
+        });
 
         const validRepoNodes = teamRepos
           .map((repoName, repoIndex) => {
-            // Spread repositories in a wider arc to prevent overlap
-            const spreadAngle = Math.min(Math.PI * 1.5, Math.PI * 0.15 * teamRepos.length); // Max 270 degrees
-            const startAngle = teamAngle - spreadAngle / 2;
+            // Calculate optimal spread angle based on number of repos
+            const minAnglePerRepo = Math.PI / 6; // 30 degrees minimum per repo
+            const desiredSpread = minAnglePerRepo * teamRepos.length;
+            const maxSpread = Math.PI * 1.2; // 216 degrees max (reduced from 270)
+            const spreadAngle = Math.min(desiredSpread, maxSpread);
+            
+            // Start branching outward from center (away from other teams)
+            const baseAngle = teamAngleFromCenter;
             const angleStep = teamRepos.length > 1 ? spreadAngle / (teamRepos.length - 1) : 0;
-            const repoAngle = startAngle + (repoIndex * angleStep);
+            const repoAngle = baseAngle - spreadAngle/2 + (repoIndex * angleStep);
             
-            // Dynamic radius based on number of repos
-            const dynamicRepoRadius = Math.max(repoRadius, repoRadius + (teamRepos.length * 10));
+            // Dynamic radius based on number of repos - more repos = larger radius
+            const radiusMultiplier = 1 + (teamRepos.length * 0.1); // 10% increase per repo
+            const dynamicRepoRadius = baseRepoRadius * radiusMultiplier;
             
-            const repoX = teamX + Math.cos(repoAngle) * dynamicRepoRadius;
-            const repoY = teamY + Math.sin(repoAngle) * dynamicRepoRadius;
+            // Check if this angle would collide with other teams
+            let finalAngle = repoAngle;
+            const minSafeDistance = Math.PI / 4; // 45 degrees minimum from other teams
+            
+            for (const avoidAngle of anglesToAvoid) {
+              const angleDiff = Math.abs((finalAngle - avoidAngle + Math.PI) % (2 * Math.PI) - Math.PI);
+              if (angleDiff < minSafeDistance) {
+                // Adjust angle to avoid collision
+                const adjustment = minSafeDistance - angleDiff;
+                // Move away from the conflicting angle
+                if (finalAngle > avoidAngle) {
+                  finalAngle += adjustment;
+                } else {
+                  finalAngle -= adjustment;
+                }
+              }
+            }
+            
+            const repoX = teamX + Math.cos(finalAngle) * dynamicRepoRadius;
+            const repoY = teamY + Math.sin(finalAngle) * dynamicRepoRadius;
             const repoNodeId = `${teamKey}-repo-${repoName}`;
 
             // Create repository stats from team PR data  
@@ -248,11 +359,14 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
               return null;
             }
             
+            // Use the filtered PRs that were passed in (already filtered by date in App.tsx)
+            const filteredRepoPRs = allTeamPullRequests[teamKey]?.filter((pr: any) => pr.repository.full_name === repoName) || repoPRs;
+            
             const repoStats = {
               repository: samplePR.repository,
-              total_open_prs: repoPRs.length,
-              assigned_to_user: repoPRs.filter((pr: any) => pr.user_is_assigned).length,
-              review_requests: repoPRs.filter((pr: any) => pr.user_is_requested_reviewer).length,
+              total_open_prs: filteredRepoPRs.length,
+              assigned_to_user: filteredRepoPRs.filter((pr: any) => pr.user_is_assigned).length,
+              review_requests: filteredRepoPRs.filter((pr: any) => pr.user_is_requested_reviewer).length,
               code_owner_prs: 0,
               last_updated: new Date().toISOString()
             };
@@ -263,7 +377,7 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
               position: { x: repoX, y: repoY },
               data: {
                 repository: repoStats,
-                isExpanded: expandedRepositories.has(repoName),
+                isExpanded: expandedRepositories.has(repoNodeId),
                 onClick: onRepositoryClick,
               },
               sourcePosition: Position.Bottom,
@@ -307,16 +421,34 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
       setNodes(currentNodes => {
         console.log('Current nodes before removal:', currentNodes.length, currentNodes.map(n => n.id));
         const filteredNodes = currentNodes.filter(node => {
-          if (!node.id.includes('-repo-')) return true; // Keep non-repo nodes
-          
-          const teamKey = node.id.split('-repo-')[0];
-          const isCollapsedTeam = newlyCollapsedTeams.includes(teamKey);
-          
-          if (isCollapsedTeam) {
-            console.log('Removing repository node:', node.id, 'because team', teamKey, 'was just collapsed');
+          // Check if this is a team repo node
+          if (node.id.includes('-repo-')) {
+            const teamKey = node.id.split('-repo-')[0];
+            const isCollapsedTeam = newlyCollapsedTeams.includes(teamKey);
+            
+            if (isCollapsedTeam) {
+              console.log('Removing repository node:', node.id, 'because team', teamKey, 'was just collapsed');
+            }
+            
+            return !isCollapsedTeam; // Remove if team was just collapsed
           }
           
-          return !isCollapsedTeam; // Remove only if team was just collapsed
+          // Check if this is a PR node belonging to a team repo
+          if (node.id.includes('-pr-')) {
+            // Check if this PR belongs to a team repository
+            for (const teamKey of newlyCollapsedTeams) {
+              // Check if any repo of this team contains this PR
+              const teamRepos = teamRepositories[teamKey] || [];
+              for (const repoName of teamRepos) {
+                if (node.id.startsWith(`${repoName}-pr-`)) {
+                  console.log('Removing PR node:', node.id, 'because it belongs to collapsed team', teamKey);
+                  return false; // Remove this PR node
+                }
+              }
+            }
+          }
+          
+          return true; // Keep all other nodes
         });
         
         if (filteredNodes.length !== currentNodes.length) {
@@ -329,10 +461,26 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
 
       setEdges(currentEdges => {
         return currentEdges.filter(edge => {
-          if (!edge.id.startsWith('edge-') || !edge.id.includes('-repo-')) return true; // Keep non-repo edges
+          // Check if this is a team repo edge
+          if (edge.id.startsWith('edge-') && edge.id.includes('-repo-')) {
+            const teamKey = edge.source;
+            return !newlyCollapsedTeams.includes(teamKey); // Remove if team was just collapsed
+          }
           
-          const teamKey = edge.source;
-          return !newlyCollapsedTeams.includes(teamKey); // Remove only if team was just collapsed
+          // Check if this is a PR edge belonging to a team repo
+          if (edge.id.includes('-pr-')) {
+            // Check if this PR edge belongs to a collapsed team's repository
+            for (const teamKey of newlyCollapsedTeams) {
+              const teamRepos = teamRepositories[teamKey] || [];
+              for (const repoName of teamRepos) {
+                if (edge.id.includes(`${repoName}-pr-`)) {
+                  return false; // Remove this PR edge
+                }
+              }
+            }
+          }
+          
+          return true; // Keep all other edges
         });
       });
     } else {
@@ -341,7 +489,7 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
 
     // Update previous expanded teams state
     setPrevExpandedTeams(new Set(expandedTeams));
-  }, [expandedTeams, teamRepositories, teams, allTeamPullRequests, onRepositoryClick]);
+  }, [expandedTeams, teamRepositories, teams, allTeamPullRequests, onRepositoryClick, expandedRepositories, width, height]);
 
   // Handle animations for newly added repository nodes
   useEffect(() => {
@@ -404,77 +552,107 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
       let nodesToAdd: any[] = [];
       let nodesToRemove: string[] = [];
 
-      // Check each expanded repository
-      expandedRepositories.forEach(repositoryName => {
-        const prs = allPullRequests[repositoryName] || [];
-        if (prs.length === 0) return;
-
-        const hasPRNodes = currentNodes.some(node => node.id.includes(`${repositoryName}-pr-`));
-        if (hasPRNodes) return; // Already have PR nodes
-
+      // Check each expanded repository node
+      expandedRepositories.forEach(nodeId => {
         // Find the repository node
-        const repoNode = currentNodes.find(node => 
-          (node.id === repositoryName || node.id.endsWith(`-repo-${repositoryName}`)) && 
-          node.type === 'repository'
-        );
-        
+        const repoNode = currentNodes.find(node => node.id === nodeId && node.type === 'repository');
         if (!repoNode) {
-          console.log('Could not find repository node for:', repositoryName);
-          console.log('Available nodes:', currentNodes.map(n => ({ id: n.id, type: n.type })));
+          console.log('Could not find repository node:', nodeId);
           return;
         }
+        
+        // Extract repository name from the node
+        let repositoryName = '';
+        if (nodeId.includes('-repo-')) {
+          // Team repository node: teamKey-repo-repoName
+          repositoryName = nodeId.split('-repo-')[1];
+        } else {
+          // Direct repository node: repoName
+          repositoryName = nodeId;
+        }
+        
+        const prs = allPullRequests[repositoryName] || [];
+        if (prs.length === 0) return;
+        
+        // Check if this specific repo node already has PR nodes
+        const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
+        const hasPRNodes = currentNodes.some(node => node.id.startsWith(`${nodePrefix}-pr-`));
+        if (hasPRNodes) return; // Already have PR nodes for this specific repo node
 
         // Find the team node this repo belongs to
         const teamNodeId = repoNode.id.split('-repo-')[0];
         const teamNode = currentNodes.find(node => node.id === teamNodeId && node.type === 'team');
-        
-        // Calculate angle from team center to repo
-        let baseAngle = 0;
-        if (teamNode) {
-          const dx = repoNode.position.x - teamNode.position.x;
-          const dy = repoNode.position.y - teamNode.position.y;
-          baseAngle = Math.atan2(dy, dx);
-        }
+          
+          // Calculate angle from team center to repo
+          let baseAngle = 0;
+          if (teamNode) {
+            const dx = repoNode.position.x - teamNode.position.x;
+            const dy = repoNode.position.y - teamNode.position.y;
+            baseAngle = Math.atan2(dy, dx);
+          }
 
-        // Dynamic radius based on number of PRs to prevent overlap
-        // Minimum radius of 150, increases by 15 for each PR to ensure spacing
-        const prRadius = Math.max(150, 100 + (prs.length * 15));
-        
-        // Spread PRs in a limited arc on the opposite side of the team
-        const maxSpread = Math.PI * 0.6; // 108 degrees max spread
-        const spreadAngle = Math.min(maxSpread, Math.PI * 0.1 * prs.length);
-        const startAngle = baseAngle - spreadAngle / 2;
-        
-        const newPRNodes = prs.map((pr, prIndex) => {
-          const angleStep = prs.length > 1 ? spreadAngle / (prs.length - 1) : 0;
-          const prAngle = startAngle + (prIndex * angleStep);
-          const prX = repoNode.position.x + Math.cos(prAngle) * prRadius;
-          const prY = repoNode.position.y + Math.sin(prAngle) * prRadius;
+          // Dynamic radius based on number of PRs to prevent overlap
+          // Increased base radius and scaling factor
+          const basePRRadius = 200; // Increased from 150
+          const prRadius = basePRRadius + (prs.length * 25); // Increased from 15 to 25 per PR
+          
+          // Calculate optimal spread for PRs
+          const minAnglePerPR = Math.PI / 12; // 15 degrees minimum per PR
+          const desiredPRSpread = minAnglePerPR * prs.length;
+          const maxSpread = Math.PI * 0.8; // 144 degrees max spread (increased from 108)
+          const spreadAngle = Math.min(desiredPRSpread, maxSpread);
+          const startAngle = baseAngle - spreadAngle / 2;
+          
+          const newPRNodes = prs.map((pr, prIndex) => {
+            const angleStep = prs.length > 1 ? spreadAngle / (prs.length - 1) : 0;
+            const prAngle = startAngle + (prIndex * angleStep);
+            const prX = repoNode.position.x + Math.cos(prAngle) * prRadius;
+            const prY = repoNode.position.y + Math.sin(prAngle) * prRadius;
 
-          return {
-            id: `${repositoryName}-pr-${pr.number}`,
-            type: 'pr',
-            position: { x: prX, y: prY },
-            data: {
-              pullRequest: pr,
-              onClick: onPRClick,
-            },
-            sourcePosition: Position.Bottom,
-            targetPosition: Position.Top,
-            className: 'node-visible',
-          };
-        });
+            return {
+              id: `${nodePrefix}-pr-${pr.number}`,
+              type: 'pr',
+              position: { x: prX, y: prY },
+              data: {
+                pullRequest: pr,
+                onClick: onPRClick,
+              },
+              sourcePosition: Position.Bottom,
+              targetPosition: Position.Top,
+              className: 'node-visible',
+            };
+          });
 
-        console.log('Adding PR nodes for repository:', repositoryName, newPRNodes.length, 'PRs');
-        nodesToAdd.push(...newPRNodes);
+          console.log('Adding PR nodes for repository node:', repoNode.id, newPRNodes.length, 'PRs');
+          nodesToAdd.push(...newPRNodes);
       });
 
       // Check for repositories that are no longer expanded
       currentNodes.forEach(node => {
         if (node.id.includes('-pr-')) {
-          const repositoryName = node.id.split('-pr-')[0];
-          if (!expandedRepositories.has(repositoryName)) {
-            console.log('Removing PR node:', node.id, 'because repo', repositoryName, 'is not expanded');
+          // Extract the repository name from the PR node ID
+          let repositoryName = '';
+          if (node.id.includes('-repo-')) {
+            // This is a team repo PR node: teamKey-repo-repoName-pr-number
+            const parts = node.id.split('-pr-')[0].split('-repo-');
+            repositoryName = parts[1];
+          } else {
+            // This is a direct repo PR node: repoName-pr-number
+            repositoryName = node.id.split('-pr-')[0];
+          }
+          
+          // Check if the parent repository node is expanded
+          let parentNodeId = '';
+          if (node.id.includes('-repo-')) {
+            // Extract parent node ID: teamKey-repo-repoName
+            parentNodeId = node.id.split('-pr-')[0];
+          } else {
+            // For direct repos, parent node ID is just the repo name
+            parentNodeId = repositoryName;
+          }
+          
+          if (!expandedRepositories.has(parentNodeId)) {
+            console.log('Removing PR node:', node.id, 'because parent node', parentNodeId, 'is not expanded');
             nodesToRemove.push(node.id);
           }
         }
@@ -496,49 +674,72 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
 
     // Handle edges separately with a slight delay to ensure nodes are created first
     setTimeout(() => {
-      setNodes(currentNodes => {
-        setEdges(currentEdges => {
+      setEdges(currentEdges => {
           let edgesToAdd: any[] = [];
           let edgesToRemove: string[] = [];
 
-          expandedRepositories.forEach(repositoryName => {
-            const prs = allPullRequests[repositoryName] || [];
-            if (prs.length === 0) return;
-
-            const hasPREdges = currentEdges.some(edge => edge.id.includes(`edge-${repositoryName}-pr-`));
-            if (hasPREdges) return;
-
-            // Find the actual repository node ID from current nodes
-            const repoNode = currentNodes.find(node => 
-              (node.id === repositoryName || node.id.endsWith(`-repo-${repositoryName}`)) && 
-              node.type === 'repository'
-            );
-            
+          expandedRepositories.forEach(nodeId => {
+            // Find the repository node
+            const repoNode = reactFlowNodes.find(node => node.id === nodeId && node.type === 'repository');
             if (!repoNode) {
-              console.log('Could not find repository node for edges:', repositoryName);
+              console.log('Could not find repository node for edges:', nodeId);
               return;
             }
             
-            const newPREdges = prs.map(pr => ({
-              id: `edge-${repositoryName}-pr-${pr.number}`,
-              source: repoNode.id,
-              target: `${repositoryName}-pr-${pr.number}`,
-              type: 'straight',
-              animated: true,
-              style: {
-                stroke: '#0366d6',
-                strokeWidth: 2,
-              },
-            }));
+            // Extract repository name
+            let repositoryName = '';
+            if (nodeId.includes('-repo-')) {
+              repositoryName = nodeId.split('-repo-')[1];
+            } else {
+              repositoryName = nodeId;
+            }
+            
+            const prs = allPullRequests[repositoryName] || [];
+            if (prs.length === 0) return;
+              const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
+              const hasPREdges = currentEdges.some(edge => edge.source === repoNode.id && edge.id.includes('-pr-'));
+              if (hasPREdges) return;
+              
+              const newPREdges = prs.map(pr => ({
+                id: `edge-${nodePrefix}-pr-${pr.number}`,
+                source: repoNode.id,
+                target: `${nodePrefix}-pr-${pr.number}`,
+                type: 'straight',
+                animated: true,
+                style: {
+                  stroke: '#0366d6',
+                  strokeWidth: 2,
+                },
+              }));
 
-            edgesToAdd.push(...newPREdges);
+              edgesToAdd.push(...newPREdges);
           });
 
           // Remove edges for collapsed repositories
           currentEdges.forEach(edge => {
             if (edge.id.includes('-pr-')) {
-              const repositoryName = edge.id.split('-pr-')[0].replace('edge-', '');
-              if (!expandedRepositories.has(repositoryName)) {
+              // Extract repository name from edge
+              let repositoryName = '';
+              if (edge.id.includes('-repo-')) {
+                // Team repo edge
+                const parts = edge.id.split('-pr-')[0].split('-repo-');
+                repositoryName = parts[1];
+              } else {
+                // Direct repo edge
+                repositoryName = edge.id.split('-pr-')[0].replace('edge-', '');
+              }
+              
+              // Extract parent node ID from edge
+              let parentNodeId = '';
+              if (edge.id.includes('-repo-')) {
+                // Team repo edge: edge-teamKey-repo-repoName-pr-number
+                parentNodeId = edge.id.split('-pr-')[0].replace('edge-', '');
+              } else {
+                // Direct repo edge: edge-repoName-pr-number
+                parentNodeId = repositoryName;
+              }
+              
+              if (!expandedRepositories.has(parentNodeId)) {
                 edgesToRemove.push(edge.id);
               }
             }
@@ -552,12 +753,9 @@ export const ReactFlowMindMap: React.FC<ReactFlowMindMapProps> = ({
             ...currentEdges.filter(edge => !edgesToRemove.includes(edge.id)),
             ...edgesToAdd
           ];
-        });
-        
-        return currentNodes; // Don't modify nodes here
       });
     }, 100);
-  }, [expandedRepositories, allPullRequests, onPRClick]);
+  }, [expandedRepositories, allPullRequests, onPRClick, reactFlowNodes]);
 
 
   const onConnect = useCallback(

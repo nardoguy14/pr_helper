@@ -6,7 +6,7 @@ import { RepositoryStats, PR_STATUS_COLORS } from '../../../types';
 interface RepositoryNodeData {
   repository: RepositoryStats;
   isExpanded: boolean;
-  onClick: (repositoryName: string) => void;
+  onClick: (nodeId: string, repositoryName: string) => void;
 }
 
 const NodeContainer = styled.div<{ $isExpanded: boolean; $color: string }>`
@@ -65,13 +65,13 @@ const getRepositoryColor = (repo: RepositoryStats): string => {
   }
 };
 
-export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data }) => {
+export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data, id }) => {
   const { repository, isExpanded, onClick } = data;
   const color = getRepositoryColor(repository);
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onClick(repository.repository.full_name);
+    onClick(id, repository.repository.full_name);
   };
 
   return (

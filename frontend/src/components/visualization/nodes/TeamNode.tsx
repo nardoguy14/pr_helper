@@ -4,7 +4,7 @@ import styled from 'styled-components';
 import { TeamStats } from '../../../types';
 
 interface TeamNodeData {
-  team: TeamStats;
+  team: TeamStats & { hasFetchedPRs?: boolean };
   isExpanded: boolean;
   onClick: (organization: string, teamName: string) => void;
 }
@@ -103,7 +103,7 @@ export const TeamNode: React.FC<NodeProps<TeamNodeData>> = ({ data }) => {
         <Organization>{team.organization}</Organization>
         <TeamName>{team.team_name}</TeamName>
         <Stats>
-          {team.total_open_prs} PRs {team.total_open_prs === 0 && <span style={{ fontSize: '9px', color: '#0366d6' }}>(using mock data)</span>}
+          {team.hasFetchedPRs === false ? '...' : `${team.total_open_prs} PRs`}
           {!team.enabled && <div style={{ fontSize: '9px', color: '#d73a49', marginTop: '2px' }}>DISABLED</div>}
         </Stats>
         {(team.assigned_to_user > 0 || team.review_requests > 0) && (

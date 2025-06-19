@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import styled, { createGlobalStyle } from 'styled-components';
 import { Plus, ArrowLeft, ChevronLeft, ChevronRight, Bell } from 'lucide-react';
 
@@ -8,6 +8,7 @@ import { AddSubscriptionForm } from './components/ui/AddSubscriptionForm';
 import { SubscriptionList } from './components/ui/SubscriptionList';
 import { ConnectionStatus } from './components/ui/ConnectionStatus';
 import { NotificationsPanel as NotificationsPanelComponent } from './components/ui/NotificationsPanel';
+import { DateRangeFilter } from './components/ui/DateRangeFilter';
 
 import { useWebSocket } from './hooks/useWebSocket';
 import { useRepositories } from './hooks/useRepositories';
@@ -277,15 +278,33 @@ const ErrorMessage = styled.div`
   font-size: 14px;
 `;
 
+const SectionTitle = styled.h3`
+  font-size: 14px;
+  font-weight: 600;
+  color: #24292e;
+  margin: 0 0 12px 0;
+  padding: 0;
+`;
+
 function App() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentView, setCurrentView] = useState<'mindmap' | 'pr-graph'>('mindmap');
   const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
+  const [expandedRepositoryNodes, setExpandedRepositoryNodes] = useState<Set<string>>(new Set());
   const [allTeamPullRequests, setAllTeamPullRequests] = useState<Record<string, any[]>>({});
   const [teamRepositories, setTeamRepositories] = useState<Record<string, string[]>>({});
   const [fetchingTeams, setFetchingTeams] = useState<Set<string>>(new Set());
+  // Initialize with last week
+  const getDefaultDateRange = () => {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+    return { startDate, endDate };
+  };
+  
+  const [dateFilter, setDateFilter] = useState<{ startDate: Date | null; endDate: Date | null }>(getDefaultDateRange());
   const notificationsRef = useRef<HTMLButtonElement>(null);
 
   // Hooks
@@ -373,6 +392,60 @@ function App() {
     }
   }, [showNotifications]);
 
+  // Auto-fetch team PRs when teams load to get accurate counts
+  useEffect(() => {
+    if (teams.length === 0) return;
+    
+    // Fetch PRs for all teams to get accurate filtered counts
+    teams.forEach(team => {
+      const teamKey = `${team.organization}/${team.team_name}`;
+      
+      // Skip if already fetching or already have data
+      if (fetchingTeams.has(teamKey) || allTeamPullRequests[teamKey]) return;
+      
+      console.log('Auto-fetching PRs for team:', teamKey);
+      
+      // Mark as fetching
+      setFetchingTeams(prev => new Set(prev).add(teamKey));
+      
+      fetch(`http://localhost:8000/api/v1/teams/${team.organization}/${team.team_name}/pull-requests`)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch team PRs: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          console.log('Auto-fetched PRs for team:', teamKey, data.pull_requests?.length || 0);
+          
+          // Store the PRs
+          setAllTeamPullRequests(prev => ({
+            ...prev,
+            [teamKey]: data.pull_requests || []
+          }));
+          
+          // Extract and store repository names
+          const repoNames = Array.from(new Set(data.pull_requests?.map((pr: any) => pr.repository.full_name) || [])) as string[];
+          if (repoNames.length > 0) {
+            setTeamRepositories(prev => ({
+              ...prev,
+              [teamKey]: repoNames
+            }));
+          }
+        })
+        .catch(error => {
+          console.error('Failed to auto-fetch team PRs:', error);
+        })
+        .finally(() => {
+          setFetchingTeams(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(teamKey);
+            return newSet;
+          });
+        });
+    });
+  }, [teams]); // Only trigger when teams load
+
   const handleAddRepository = async (request: SubscribeRepositoryRequest) => {
     try {
       await subscribeToRepository(request);
@@ -401,9 +474,20 @@ function App() {
     await unsubscribeFromRepository(repositoryName);
   };
 
-  const handleRepositoryClick = useCallback(async (repositoryName: string) => {
-    console.log('handleRepositoryClick called:', repositoryName);
-    console.log('Current expandedRepositories before toggle:', Array.from(expandedRepositories));
+  const handleRepositoryClick = useCallback(async (nodeId: string, repositoryName: string) => {
+    console.log('handleRepositoryClick called:', nodeId, repositoryName);
+    console.log('Current expandedRepositoryNodes before toggle:', Array.from(expandedRepositoryNodes));
+    
+    // Toggle the node expansion state
+    setExpandedRepositoryNodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
     
     // Check if we already have PR data for this repository (either from direct subscription or team)
     const hasPRData = allPullRequests[repositoryName] || 
@@ -430,10 +514,8 @@ function App() {
         }
       }
       
-      // Toggle expansion - this should work in React Flow
-      console.log('Toggling repository expansion for:', repositoryName);
+      // Also toggle in the old system for backward compatibility
       toggleRepositoryExpansion(repositoryName);
-      console.log('expandedRepositories will be updated to:', expandedRepositories.has(repositoryName) ? 'collapsed' : 'expanded');
     } else {
       // Fetch PR data if we don't have it
       try {
@@ -443,7 +525,7 @@ function App() {
         console.error('Failed to fetch pull requests:', error);
       }
     }
-  }, [expandedRepositories, allPullRequests, allTeamPullRequests, addPullRequest, toggleRepositoryExpansion, fetchPullRequestsForRepository]);
+  }, [expandedRepositoryNodes, allPullRequests, allTeamPullRequests, addPullRequest, toggleRepositoryExpansion, fetchPullRequestsForRepository]);
 
   const handleTeamClick = useCallback(async (organization: string, teamName: string) => {
     console.log('handleTeamClick called:', organization, teamName);
@@ -575,8 +657,111 @@ function App() {
     window.open(pr.html_url, '_blank');
   }, []);
 
+  // Get all PRs from both repositories and teams
+  const allPRs = useMemo(() => {
+    const repoPRs = Object.values(allPullRequests).flat();
+    const teamPRs = Object.values(allTeamPullRequests).flat();
+    return [...repoPRs, ...teamPRs];
+  }, [allPullRequests, allTeamPullRequests]);
+
+  // Filter PRs based on date filter
+  const filteredPullRequests = useMemo(() => {
+    if (!dateFilter.startDate && !dateFilter.endDate) return allPullRequests;
+    
+    const filtered: Record<string, PullRequest[]> = {};
+    Object.entries(allPullRequests).forEach(([repo, prs]) => {
+      const filteredPRs = prs.filter(pr => {
+        const prDate = new Date(pr.created_at);
+        const afterStart = !dateFilter.startDate || prDate >= dateFilter.startDate;
+        const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
+        return afterStart && beforeEnd;
+      });
+      // Only include repos that have PRs in the date range
+      if (filteredPRs.length > 0) {
+        filtered[repo] = filteredPRs;
+      }
+    });
+    return filtered;
+  }, [allPullRequests, dateFilter]);
+
+  // Filter team PRs based on date filter
+  const filteredTeamPullRequests = useMemo(() => {
+    if (!dateFilter.startDate && !dateFilter.endDate) return allTeamPullRequests;
+    
+    const filtered: Record<string, any[]> = {};
+    Object.entries(allTeamPullRequests).forEach(([team, prs]) => {
+      const filteredPRs = prs.filter(pr => {
+        const prDate = new Date(pr.created_at);
+        const afterStart = !dateFilter.startDate || prDate >= dateFilter.startDate;
+        const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
+        return afterStart && beforeEnd;
+      });
+      // Only include teams that have PRs in the date range
+      if (filteredPRs.length > 0) {
+        filtered[team] = filteredPRs;
+      }
+    });
+    return filtered;
+  }, [allTeamPullRequests, dateFilter]);
+
+  // Filter repositories to only show those with visible PRs and update their counts
+  const visibleRepositories = useMemo(() => {
+    return repositories
+      .map(repo => {
+        const repoPRs = filteredPullRequests[repo.repository.full_name] || [];
+        if (repoPRs.length === 0) return null;
+        
+        // Calculate filtered stats
+        const filteredStats = {
+          total_open_prs: repoPRs.length,
+          assigned_to_user: repoPRs.filter(pr => pr.user_is_assigned).length,
+          review_requests: repoPRs.filter(pr => pr.user_is_requested_reviewer).length,
+          code_owner_prs: 0, // Maintain the property for compatibility
+        };
+        
+        return {
+          ...repo,
+          ...filteredStats
+        };
+      })
+      .filter((repo): repo is NonNullable<typeof repo> => repo !== null);
+  }, [repositories, filteredPullRequests]);
+
+  // Create teams with filtered PR counts based on date filter
+  const teamsWithFilteredCounts = useMemo(() => {
+    return teams.map(team => {
+      const teamKey = `${team.organization}/${team.team_name}`;
+      const teamPRs = filteredTeamPullRequests[teamKey];
+      
+      console.log(`Team ${teamKey}: original count=${team.total_open_prs}, has fetched PRs=${!!teamPRs}, fetched count=${teamPRs?.length || 0}`);
+      
+      // If we have fetched PRs for this team, use the filtered count
+      // Otherwise, return the team with a flag indicating we need to fetch PRs
+      if (teamPRs) {
+        const filteredStats = {
+          total_open_prs: teamPRs.length,
+          assigned_to_user: teamPRs.filter((pr: any) => pr.user_is_assigned).length,
+          review_requests: teamPRs.filter((pr: any) => pr.user_is_requested_reviewer).length,
+        };
+        
+        return {
+          ...team,
+          ...filteredStats,
+          hasFetchedPRs: true
+        };
+      }
+      
+      // Return original team stats if we haven't fetched the PRs yet
+      // The display will show "..." or indicate loading for unfetched teams
+      return {
+        ...team,
+        hasFetchedPRs: false
+      };
+    });
+  }, [teams, filteredTeamPullRequests]);
+
   // Get PRs that need review from the current user
-  const reviewPRs = Object.entries(allPullRequests).flatMap(([repoName, prs]) =>
+  const reviewPRs = Object.entries(filteredPullRequests).flatMap(([repoName, prs]) =>
     prs
       .filter(pr => 
         pr.user_is_requested_reviewer || 
@@ -617,7 +802,7 @@ function App() {
               )}
               <NotificationsDropdown $visible={showNotifications}>
                 <NotificationsPanelComponent
-                  allPullRequests={allPullRequests}
+                  allPullRequests={filteredPullRequests}
                   onPRClick={handlePRClick}
                 />
               </NotificationsDropdown>
@@ -626,14 +811,28 @@ function App() {
         </Header>
 
         <RepositoriesPanel $collapsed={repositoriesCollapsed}>
-          <Button 
-            $variant="primary" 
-            onClick={() => setShowAddForm(true)}
-            style={{ marginBottom: '8px' }}
-          >
-            <Plus size={16} />
-            Add Subscription
-          </Button>
+          {/* Date Range Filter */}
+          {allPRs.length > 0 && (
+            <>
+              <SectionTitle>Filter PRs</SectionTitle>
+              <DateRangeFilter
+                pullRequests={allPRs}
+                onDateChange={(startDate, endDate) => {
+                  setDateFilter({ startDate, endDate });
+                  // Reset expanded states to redraw the whole graph
+                  setExpandedTeams(new Set());
+                  setExpandedRepositoryNodes(new Set());
+                  // Clear all expanded repositories
+                  if (expandedRepositories.size > 0) {
+                    clearAllPullRequests();
+                  }
+                }}
+              />
+            </>
+          )}
+          
+          {/* Subscriptions Section */}
+          <SectionTitle>Subscriptions</SectionTitle>
           
           {(reposError || teamsError) && (
             <ErrorMessage>
@@ -648,8 +847,8 @@ function App() {
             </EmptyState>
           ) : (
             <SubscriptionList
-              repositories={repositories}
-              teams={teams}
+              repositories={visibleRepositories}
+              teams={teamsWithFilteredCounts}
               onRemoveRepository={handleRemoveRepository}
               onRefreshRepository={refreshRepository}
               onRemoveTeam={unsubscribeFromTeam}
@@ -657,6 +856,15 @@ function App() {
               loading={reposLoading || teamsLoading}
             />
           )}
+          
+          <Button 
+            $variant="primary" 
+            onClick={() => setShowAddForm(true)}
+            style={{ marginTop: '16px', width: '100%' }}
+          >
+            <Plus size={16} />
+            Add Subscription
+          </Button>
         </RepositoriesPanel>
 
         <RepositoriesToggle
@@ -693,17 +901,18 @@ function App() {
                   <h3>Loading...</h3>
                   <p>Setting up your repository dashboard.</p>
                 </EmptyState>
-              ) : repositories.length > 0 || teams.length > 0 ? (
+              ) : visibleRepositories.length > 0 || teamsWithFilteredCounts.length > 0 ? (
                 <ReactFlowMindMap
-                  repositories={repositories}
-                  teams={teams}
+                  key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}`}
+                  repositories={visibleRepositories}
+                  teams={teamsWithFilteredCounts}
                   onRepositoryClick={handleRepositoryClick}
                   onTeamClick={handleTeamClick}
                   onPRClick={handlePRClick}
-                  expandedRepositories={expandedRepositories}
+                  expandedRepositories={expandedRepositoryNodes}
                   expandedTeams={expandedTeams}
-                  allPullRequests={allPullRequests}
-                  allTeamPullRequests={allTeamPullRequests}
+                  allPullRequests={filteredPullRequests}
+                  allTeamPullRequests={filteredTeamPullRequests}
                   teamRepositories={teamRepositories}
                 />
               ) : (
@@ -723,7 +932,7 @@ function App() {
             ) : (
               expandedRepositories.size > 0 && (
                 <PRDirectedGraph
-                  pullRequests={Object.values(allPullRequests).flat()}
+                  pullRequests={Object.values(filteredPullRequests).flat()}
                   repositoryName={Array.from(expandedRepositories)[0]}
                   onPRClick={handlePRClick}
                 />
