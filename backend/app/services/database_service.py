@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from app.database.models import (
@@ -114,7 +114,7 @@ class DatabaseService:
             db_stats.total_open_prs = total_open_prs
             db_stats.assigned_to_user = assigned_to_user
             db_stats.review_requests = review_requests
-            db_stats.last_updated = datetime.utcnow()
+            db_stats.last_updated = datetime.now(timezone.utc)
         else:
             # Create new stats
             db_stats = DBTeamStats(
@@ -226,6 +226,84 @@ class DatabaseService:
             )
             for db_team_sub in db_team_subs
         ]
+    
+    # Repository Subscription Operations
+    async def get_all_repository_subscriptions(self) -> List[RepositorySubscription]:
+        """Get all repository subscriptions"""
+        result = await self.db.execute(select(DBRepositorySubscription))
+        db_repo_subs = result.scalars().all()
+        
+        return [
+            RepositorySubscription(
+                repository_name=db_repo_sub.repository_name,
+                watch_all_prs=db_repo_sub.watch_all_prs,
+                watch_assigned_prs=db_repo_sub.watch_assigned_prs,
+                watch_review_requests=db_repo_sub.watch_review_requests,
+                watch_code_owner_prs=db_repo_sub.watch_code_owner_prs,
+                teams=db_repo_sub.teams or []
+            )
+            for db_repo_sub in db_repo_subs
+        ]
+    
+    # Repository Stats Operations  
+    async def get_all_repository_stats(self) -> List[RepositoryStats]:
+        """Get all repository statistics"""
+        result = await self.db.execute(select(DBRepositoryStats))
+        db_repo_stats = result.scalars().all()
+        
+        return [
+            RepositoryStats(
+                repository_name=db_repo_stat.repository_name,
+                total_open_prs=db_repo_stat.total_open_prs,
+                assigned_to_user=db_repo_stat.assigned_to_user,
+                review_requests=db_repo_stat.review_requests,
+                code_owner_prs=db_repo_stat.code_owner_prs,
+                last_updated=db_repo_stat.last_updated
+            )
+            for db_repo_stat in db_repo_stats
+        ]
+    
+    async def update_repository_stats(self, repository_name: str, 
+                                     total_open_prs: int, assigned_to_user: int, 
+                                     review_requests: int, code_owner_prs: int = 0) -> RepositoryStats:
+        """Update or create repository statistics"""
+        # Check if stats exist
+        result = await self.db.execute(
+            select(DBRepositoryStats).where(
+                DBRepositoryStats.repository_name == repository_name
+            )
+        )
+        db_stats = result.scalar_one_or_none()
+        
+        if db_stats:
+            # Update existing stats
+            db_stats.total_open_prs = total_open_prs
+            db_stats.assigned_to_user = assigned_to_user
+            db_stats.review_requests = review_requests
+            db_stats.code_owner_prs = code_owner_prs
+            db_stats.last_updated = datetime.now(timezone.utc)
+        else:
+            # Create new stats
+            db_stats = DBRepositoryStats(
+                repository_name=repository_name,
+                total_open_prs=total_open_prs,
+                assigned_to_user=assigned_to_user,
+                review_requests=review_requests,
+                code_owner_prs=code_owner_prs
+            )
+            self.db.add(db_stats)
+        
+        await self.db.commit()
+        await self.db.refresh(db_stats)
+        
+        return RepositoryStats(
+            repository_name=db_stats.repository_name,
+            total_open_prs=db_stats.total_open_prs,
+            assigned_to_user=db_stats.assigned_to_user,
+            review_requests=db_stats.review_requests,
+            code_owner_prs=db_stats.code_owner_prs,
+            last_updated=db_stats.last_updated
+        )
     
     # Pull Request Operations
     async def upsert_pull_requests(self, pull_requests: List[dict]) -> None:

@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Set, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Set, List, Optional, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -98,21 +98,29 @@ class PRMonitorScheduler:
         logger.info(f"Polling {len(self.subscribed_repositories)} repositories and {len(self.subscribed_teams)} teams for PR updates")
         
         async with GitHubService() as github_service:
-            # Poll repositories
+            # PHASE 1: Data Collection - Poll all sources and collect PR data
+            
+            # Poll repositories (existing logic unchanged)
             for repo_name, subscription in self.subscribed_repositories.items():
                 try:
                     await self._poll_repository(github_service, repo_name, subscription)
                 except Exception as e:
                     logger.error(f"Error polling repository {repo_name}: {e}")
             
-            # Poll teams (only enabled ones)
+            # Poll teams (only enabled ones) - collect data without updating associations
+            all_team_prs = {}  # team_key -> list of PRs
             for team_key, subscription in self.subscribed_teams.items():
                 if not subscription.enabled:
                     continue
                 try:
-                    await self._poll_team(github_service, team_key, subscription)
+                    team_prs = await self._collect_team_prs(github_service, team_key, subscription)
+                    if team_prs:
+                        all_team_prs[team_key] = team_prs
                 except Exception as e:
                     logger.error(f"Error polling team {team_key}: {e}")
+            
+            # PHASE 2: Association Updates - Update all team associations at once
+            await self._update_all_team_associations(all_team_prs)
     
     async def _poll_repository(
         self, 
@@ -141,7 +149,7 @@ class PRMonitorScheduler:
                 closed_prs.append(previous_prs[pr_number])
             
             self.pr_cache[repo_name] = {pr.number: pr for pr in current_prs}
-            self.pr_cache_timestamp[repo_name] = datetime.utcnow()
+            self.pr_cache_timestamp[repo_name] = datetime.now(timezone.utc)
             
             # Save PRs to database
             async for db in get_db():
@@ -158,6 +166,24 @@ class PRMonitorScheduler:
             )
             
             await self._send_repository_stats_update(repo_name, current_prs)
+            
+            # Update repository stats in database
+            async for db in get_db():
+                db_service = DatabaseService(db)
+                repo_stats = {
+                    "total_open_prs": len(current_prs),
+                    "assigned_to_user": len([pr for pr in current_prs if pr.user_is_assigned]),
+                    "review_requests": len([pr for pr in current_prs if pr.user_is_requested_reviewer]),
+                    "code_owner_prs": 0  # TODO: Implement code owner detection
+                }
+                await db_service.update_repository_stats(
+                    repository_name=repo_name,
+                    total_open_prs=repo_stats["total_open_prs"],
+                    assigned_to_user=repo_stats["assigned_to_user"],
+                    review_requests=repo_stats["review_requests"],
+                    code_owner_prs=repo_stats["code_owner_prs"]
+                )
+                break
             
         except Exception as e:
             logger.error(f"Error polling repository {repo_name}: {e}")
@@ -190,7 +216,7 @@ class PRMonitorScheduler:
                 closed_prs.append(previous_prs[pr_number])
             
             self.team_pr_cache[team_key] = {pr.number: pr for pr in current_prs}
-            self.team_pr_cache_timestamp[team_key] = datetime.utcnow()
+            self.team_pr_cache_timestamp[team_key] = datetime.now(timezone.utc)
             
             # Save PRs to database and update team associations
             async for db in get_db():
@@ -222,6 +248,97 @@ class PRMonitorScheduler:
             
         except Exception as e:
             logger.error(f"Error polling team {team_key}: {e}")
+    
+    async def _collect_team_prs(
+        self, 
+        github_service: GitHubService, 
+        team_key: str, 
+        subscription: TeamSubscription
+    ) -> Dict[str, Any]:
+        """Phase 1: Collect team PR data without updating associations"""
+        try:
+            org, team_name = team_key.split('/', 1)
+            current_prs = await github_service.get_team_pull_requests(org, team_name)
+            previous_prs = self.team_pr_cache.get(team_key, {})
+            
+            new_prs = []
+            updated_prs = []
+            closed_prs = []
+            
+            current_pr_numbers = {pr.number for pr in current_prs}
+            previous_pr_numbers = set(previous_prs.keys())
+            
+            for pr in current_prs:
+                if pr.number not in previous_prs:
+                    new_prs.append(pr)
+                elif pr.updated_at != previous_prs[pr.number].updated_at:
+                    updated_prs.append(pr)
+            
+            for pr_number in previous_pr_numbers - current_pr_numbers:
+                closed_prs.append(previous_prs[pr_number])
+            
+            # Update cache
+            self.team_pr_cache[team_key] = {pr.number: pr for pr in current_prs}
+            self.team_pr_cache_timestamp[team_key] = datetime.now(timezone.utc)
+            
+            # Save PRs to database (but don't update associations yet)
+            async for db in get_db():
+                db_service = DatabaseService(db)
+                pr_dicts = [pr.dict() for pr in current_prs]
+                await db_service.upsert_pull_requests(pr_dicts)
+                await db_service.delete_closed_pull_requests()
+                break
+            
+            # Send notifications and stats updates
+            await self._handle_team_pr_changes(
+                team_key, subscription, new_prs, updated_prs, closed_prs
+            )
+            await self._send_team_stats_update(org, team_name, current_prs)
+            
+            return {
+                'team_key': team_key,
+                'current_prs': current_prs,
+                'org': org,
+                'team_name': team_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Error collecting PRs for team {team_key}: {e}")
+            return {}
+    
+    async def _update_all_team_associations(self, all_team_prs: Dict[str, Dict[str, Any]]):
+        """Phase 2: Update all team associations after all data is collected"""
+        if not all_team_prs:
+            return
+            
+        try:
+            # Build a mapping of PR -> teams that should be associated with it
+            pr_team_associations = {}  # pr_id -> set of team_keys
+            
+            for team_data in all_team_prs.values():
+                if not team_data:
+                    continue
+                    
+                team_key = team_data['team_key']
+                current_prs = team_data['current_prs']
+                
+                for pr in current_prs:
+                    pr_id = int(pr.id)
+                    if pr_id not in pr_team_associations:
+                        pr_team_associations[pr_id] = set()
+                    pr_team_associations[pr_id].add(team_key)
+            
+            # Update database with all associations at once
+            async for db in get_db():
+                db_service = DatabaseService(db)
+                for pr_id, associated_teams in pr_team_associations.items():
+                    await db_service.update_pr_team_associations(pr_id, list(associated_teams))
+                break
+                
+            logger.info(f"Updated team associations for {len(pr_team_associations)} PRs across {len(all_team_prs)} teams")
+            
+        except Exception as e:
+            logger.error(f"Error updating team associations: {e}")
     
     async def _handle_team_pr_changes(
         self,
@@ -268,7 +385,7 @@ class PRMonitorScheduler:
                 "total_open_prs": len(prs),
                 "assigned_to_user": len([pr for pr in prs if pr.user_is_assigned]),
                 "review_requests": len([pr for pr in prs if pr.user_is_requested_reviewer]),
-                "last_updated": datetime.utcnow().isoformat()
+                "last_updated": datetime.now(timezone.utc).isoformat()
             }
             
             # Update database with team stats
@@ -328,7 +445,7 @@ class PRMonitorScheduler:
     
     async def _send_pr_notification(self, pr: PullRequest, notification_type: str):
         notification_key = f"{pr.repository.full_name}:{pr.number}:{notification_type}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if notification_key in self.last_notification_time:
             time_since_last = now - self.last_notification_time[notification_key]
@@ -357,7 +474,7 @@ class PRMonitorScheduler:
                 "assigned_to_user": len([pr for pr in prs if pr.user_is_assigned]),
                 "review_requests": len([pr for pr in prs if pr.user_is_requested_reviewer]),
                 "needs_review": len([pr for pr in prs if pr.status == PRStatus.NEEDS_REVIEW]),
-                "last_updated": datetime.utcnow().isoformat()
+                "last_updated": datetime.now(timezone.utc).isoformat()
             }
             
             await websocket_manager.send_repository_stats_update(repo_name, stats)
@@ -398,7 +515,15 @@ class PRMonitorScheduler:
                 for team_sub in team_subscriptions:
                     self.add_team_subscription(team_sub)
                 
-                logger.info(f"Loaded {len(team_subscriptions)} existing team subscriptions from database")
+                # Load existing repository subscriptions
+                repo_subscriptions = await db_service.get_all_repository_subscriptions()
+                for repo_sub in repo_subscriptions:
+                    self.add_repository_subscription(repo_sub)
+                
+                logger.info(f"Loaded {len(team_subscriptions)} team subscriptions and {len(repo_subscriptions)} repository subscriptions from database")
+                
+                # Check if we need to poll immediately based on last update times
+                await self._check_and_poll_if_needed(db_service)
                 break
             
             # Auto-subscribe to user's teams if enabled
@@ -409,6 +534,61 @@ class PRMonitorScheduler:
                 
         except Exception as e:
             logger.error(f"Error loading existing subscriptions: {e}")
+    
+    async def _check_and_poll_if_needed(self, db_service: DatabaseService):
+        """Check last update times and poll if data is stale"""
+        try:
+            current_time = datetime.now(timezone.utc)
+            polling_interval = timedelta(seconds=settings.POLLING_INTERVAL_SECONDS)
+            
+            # Get all team stats to check their last update times
+            team_stats = await db_service.get_all_team_stats()
+            
+            teams_to_poll = []
+            for stat in team_stats:
+                team_key = f"{stat.organization}/{stat.team_name}"
+                # Check if this team is subscribed and enabled
+                if team_key in self.subscribed_teams and self.subscribed_teams[team_key].enabled:
+                    # Check if data is stale (last update is older than polling interval)
+                    if stat.last_updated is None or (current_time - stat.last_updated) > polling_interval:
+                        teams_to_poll.append(team_key)
+                        logger.info(f"Team {team_key} needs immediate poll - last updated: {stat.last_updated}")
+            
+            # Get all repository stats to check their last update times
+            repo_stats = await db_service.get_all_repository_stats()
+            
+            repos_to_poll = []
+            for stat in repo_stats:
+                repo_name = stat.repository_name
+                # Check if this repository is subscribed
+                if repo_name in self.subscribed_repositories:
+                    # Check if data is stale (last update is older than polling interval)
+                    if stat.last_updated is None or (current_time - stat.last_updated) > polling_interval:
+                        repos_to_poll.append(repo_name)
+                        logger.info(f"Repository {repo_name} needs immediate poll - last updated: {stat.last_updated}")
+            
+            # Poll stale teams and repositories immediately
+            if teams_to_poll or repos_to_poll:
+                logger.info(f"Polling {len(teams_to_poll)} teams and {len(repos_to_poll)} repositories with stale data on startup")
+                async with GitHubService() as github_service:
+                    # Poll teams
+                    for team_key in teams_to_poll:
+                        try:
+                            await self._poll_team(github_service, team_key, self.subscribed_teams[team_key])
+                        except Exception as e:
+                            logger.error(f"Error polling team {team_key} on startup: {e}")
+                    
+                    # Poll repositories
+                    for repo_name in repos_to_poll:
+                        try:
+                            await self._poll_repository(github_service, repo_name, self.subscribed_repositories[repo_name])
+                        except Exception as e:
+                            logger.error(f"Error polling repository {repo_name} on startup: {e}")
+            else:
+                logger.info("All team and repository data is fresh, skipping initial poll")
+                
+        except Exception as e:
+            logger.error(f"Error checking poll status on startup: {e}")
     
     async def _auto_subscribe_user_teams(self):
         """Automatically subscribe to all teams the user belongs to"""

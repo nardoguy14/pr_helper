@@ -11,6 +11,7 @@ import ReactFlow, {
   MiniMap,
   NodeTypes,
   Position,
+  ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import styled from 'styled-components';
@@ -126,6 +127,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
 }) => {
   const [reactFlowNodes, setNodes, onNodesChange] = useNodesState([]);
   const [reactFlowEdges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   
   // Debug: Log whenever nodes change
   useEffect(() => {
@@ -782,6 +784,28 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
     );
   }, [setNodes]);
 
+  // Handle ReactFlow initialization
+  const onInit = useCallback((instance: ReactFlowInstance) => {
+    setReactFlowInstance(instance);
+  }, []);
+
+  // Fit view whenever nodes change significantly
+  useEffect(() => {
+    if (!reactFlowInstance || reactFlowNodes.length === 0) return;
+    
+    // Small delay to ensure nodes are rendered
+    const timeoutId = setTimeout(() => {
+      reactFlowInstance.fitView({
+        padding: 0.15,
+        duration: 800,
+        minZoom: 0.3,
+        maxZoom: 1.5,
+      });
+    }, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [reactFlowInstance, reactFlowNodes.length]);
+
   return (
     <Container>
       <ReactFlow
@@ -792,6 +816,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         onConnect={onConnect}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
+        onInit={onInit}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{
