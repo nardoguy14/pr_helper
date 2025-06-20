@@ -19,12 +19,84 @@ from app.services.github_service import GitHubService
 from app.services.websocket_manager import websocket_manager
 from app.services.scheduler import get_scheduler
 from app.services.database_service import DatabaseService
+from app.services.token_service import token_service
 from app.database.database import get_db
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# Authentication endpoints
+@router.post("/auth/token")
+async def set_github_token(request: dict):
+    """Set and validate GitHub token"""
+    try:
+        token = request.get("token", "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="Token is required")
+        
+        is_valid = await token_service.set_token(token)
+        
+        if not is_valid:
+            raise HTTPException(
+                status_code=401, 
+                detail="Invalid GitHub token or insufficient permissions. Ensure token has 'repo' and 'user' scopes."
+            )
+        
+        user_info = token_service.user_info
+        
+        # Start scheduler now that we have a valid token
+        scheduler = get_scheduler()
+        if not scheduler.is_running:
+            await scheduler.start()
+        
+        return {
+            "success": True,
+            "message": "GitHub token validated successfully",
+            "user": user_info,
+            "scopes_validated": True
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting GitHub token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/auth/status")
+async def get_auth_status():
+    """Get current authentication status"""
+    try:
+        return {
+            "authenticated": token_service.is_token_valid,
+            "user": token_service.user_info if token_service.is_token_valid else None
+        }
+    except Exception as e:
+        logger.error(f"Error getting auth status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/auth/token")
+async def clear_github_token():
+    """Clear the current GitHub token"""
+    try:
+        token_service.clear_token()
+        
+        # Stop scheduler when token is cleared
+        scheduler = get_scheduler()
+        if scheduler.is_running:
+            await scheduler.stop()
+        
+        return {
+            "success": True,
+            "message": "GitHub token cleared successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing GitHub token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/repositories/subscribe", response_model=SubscribeRepositoryResponse)

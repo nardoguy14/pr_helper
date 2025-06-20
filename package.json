@@ -1,0 +1,83 @@
+{
+  "name": "pr-monitor",
+  "version": "1.0.0",
+  "description": "GitHub Pull Request Monitor Desktop App",
+  "main": "electron/main.js",
+  "author": "Your Name",
+  "license": "MIT",
+  "scripts": {
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\" \"wait-on http://localhost:3000 && npm run start:electron\"",
+    "start:backend": "cd backend && python run.py",
+    "start:frontend": "cd frontend && npm start",
+    "start:electron": "electron .",
+    "start:electron-dev": "ELECTRON_IS_DEV=1 electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build": "npm run build:frontend && electron-builder",
+    "dist": "npm run build:frontend && electron-builder --publish=never",
+    "dist:mac": "npm run build:frontend && electron-builder --mac",
+    "dist:win": "npm run build:frontend && electron-builder --win",
+    "dist:linux": "npm run build:frontend && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.prmonitor.app",
+    "productName": "PR Monitor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/build/**/*",
+      "!frontend/node_modules/**/*",
+      "!frontend/src/**/*",
+      "!frontend/public/**/*",
+      "!backend/venv/**/*",
+      "!backend/__pycache__/**/*",
+      "!backend/**/*.pyc",
+      "!backend/.env",
+      "!backend/*.log",
+      "!backend/*.db"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!venv/**/*",
+          "!__pycache__/**/*",
+          "!**/*.pyc",
+          "!.env",
+          "!*.log",
+          "!*.db"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "electron/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "electron/icons/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "electron/icons/icon.png",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

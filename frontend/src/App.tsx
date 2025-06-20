@@ -9,11 +9,13 @@ import { SubscriptionList } from './components/ui/SubscriptionList';
 import { ConnectionStatus } from './components/ui/ConnectionStatus';
 import { NotificationsPanel as NotificationsPanelComponent } from './components/ui/NotificationsPanel';
 import { DateRangeFilter } from './components/ui/DateRangeFilter';
+import { TokenSetup } from './components/auth/TokenSetup';
 
 import { useWebSocket } from './hooks/useWebSocket';
 import { useRepositories } from './hooks/useRepositories';
 import { useTeams } from './hooks/useTeams';
 import { usePullRequests } from './hooks/usePullRequests';
+import { useAuth } from './hooks/useAuth';
 
 import { SubscribeRepositoryRequest, TeamSubscriptionRequest, PullRequest } from './types';
 
@@ -306,6 +308,16 @@ function App() {
   
   const [dateFilter, setDateFilter] = useState<{ startDate: Date | null; endDate: Date | null }>(getDefaultDateRange());
   const notificationsRef = useRef<HTMLButtonElement>(null);
+
+  // Authentication hook
+  const { 
+    isAuthenticated, 
+    user, 
+    isLoading: authLoading, 
+    error: authError, 
+    setToken, 
+    clearToken 
+  } = useAuth();
 
   // Hooks
   const {
@@ -858,9 +870,36 @@ function App() {
     (pr.status === 'needs_review' && !pr.user_has_reviewed)
   );
 
+  // Handle token setup
+  const handleTokenSet = async (token: string, userInfo: any) => {
+    console.log('Token set successfully, user:', userInfo);
+    // The authentication state should already be updated by the TokenSetup component
+    // Just trigger any additional data refresh if needed
+  };
+
+  // Show loading screen while checking authentication
+  if (authLoading) {
+    return (
+      <>
+        <GlobalStyle />
+        <AppContainer style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '18px', marginBottom: '8px' }}>Loading...</div>
+            <div style={{ color: '#586069' }}>Checking authentication status</div>
+          </div>
+        </AppContainer>
+      </>
+    );
+  }
+
   return (
     <>
       <GlobalStyle />
+      <TokenSetup 
+        isVisible={!isAuthenticated} 
+        onTokenSet={handleTokenSet}
+        setToken={setToken}
+      />
       <AppContainer>
         <Header>
           <HeaderLeft>

@@ -10,6 +10,7 @@ from app.services.github_service import GitHubService
 from app.services.websocket_manager import websocket_manager
 from app.services.slack_service import slack_service
 from app.services.database_service import DatabaseService
+from app.services.token_service import token_service
 from app.database.database import get_db
 from app.models.pr_models import PullRequest, RepositorySubscription, TeamSubscription, PRStatus
 
@@ -28,7 +29,12 @@ class PRMonitorScheduler:
         self.last_notification_time: Dict[str, datetime] = {}
         self.is_running = False
     
-    def start(self):
+    async def start(self):
+        """Start the scheduler (requires valid token)"""
+        if not token_service.is_token_valid:
+            logger.warning("Cannot start scheduler without valid GitHub token")
+            return False
+            
         if not self.is_running:
             self.scheduler.add_job(
                 self.poll_repositories,
@@ -41,13 +47,18 @@ class PRMonitorScheduler:
             logger.info("PR Monitor scheduler started")
             
             # Load existing subscriptions from database
-            asyncio.create_task(self._load_existing_subscriptions())
+            await self._load_existing_subscriptions()
+            return True
+        return True
     
-    def stop(self):
+    async def stop(self):
+        """Stop the scheduler"""
         if self.is_running:
-            self.scheduler.shutdown()
+            self.scheduler.shutdown(wait=False)
             self.is_running = False
             logger.info("PR Monitor scheduler stopped")
+            return True
+        return False
     
     def add_repository_subscription(self, subscription: RepositorySubscription):
         repo_name = subscription.repository_name
@@ -89,6 +100,11 @@ class PRMonitorScheduler:
         return list(self.subscribed_teams.keys())
     
     async def poll_repositories(self):
+        # Check if we have a valid token before polling
+        if not token_service.is_token_valid:
+            logger.warning("Skipping poll: No valid GitHub token available")
+            return
+            
         has_repos = bool(self.subscribed_repositories)
         has_teams = bool(self.subscribed_teams)
         
@@ -650,11 +666,16 @@ scheduler = PRMonitorScheduler()
 
 
 def start_scheduler():
-    scheduler.start()
+    # Don't start the scheduler automatically - it will be started when a token is provided
+    logger.info("Scheduler service initialized (waiting for GitHub token)")
 
 
-def stop_scheduler():
-    scheduler.stop()
+async def start_scheduler_async():
+    return await scheduler.start()
+
+
+async def stop_scheduler():
+    return await scheduler.stop()
 
 
 def get_scheduler() -> PRMonitorScheduler:

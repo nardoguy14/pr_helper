@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.models.pr_models import (
     PullRequest, User, Repository, Review, PRState, ReviewState, PRStatus
 )
+from app.services.token_service import token_service
 
 logger = logging.getLogger(__name__)
 
@@ -14,22 +15,33 @@ logger = logging.getLogger(__name__)
 class GitHubService:
     def __init__(self):
         self.base_url = settings.GITHUB_API_BASE_URL
-        self.headers = {
-            "Authorization": f"token {settings.GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "PR-Monitor-Backend/1.0"
-        }
-        self.client = httpx.AsyncClient(
-            headers=self.headers,
-            timeout=30.0
-        )
         self.current_user: Optional[User] = None
+        self._client: Optional[httpx.AsyncClient] = None
+    
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Get HTTP client with dynamic token"""
+        if not token_service.is_token_valid:
+            raise ValueError("No valid GitHub token available. Please authenticate first.")
+        
+        if self._client is None:
+            headers = token_service.get_auth_headers()
+            headers["User-Agent"] = "PR-Monitor-Backend/1.0"
+            
+            self._client = httpx.AsyncClient(
+                headers=headers,
+                timeout=30.0
+            )
+        
+        return self._client
     
     async def __aenter__(self):
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.client.aclose()
+        if self._client:
+            await self._client.aclose()
+            self._client = None
     
     async def get_current_user(self) -> Optional[User]:
         if self.current_user:
