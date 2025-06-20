@@ -4,6 +4,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone
 import json
+import logging
 
 from app.database.models import (
     TeamSubscription as DBTeamSubscription,
@@ -16,6 +17,8 @@ from app.models.pr_models import (
     TeamSubscription, TeamStats, TeamSubscriptionRequest,
     RepositorySubscription, RepositoryStats
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseService:
@@ -395,6 +398,56 @@ class DatabaseService:
         db_prs = result.scalars().all()
         
         return [json.loads(pr.pr_data) for pr in db_prs]
+    
+    async def get_user_relevant_pull_requests(self, subscribed_repos: List[str], subscribed_teams: List[str]) -> List[dict]:
+        """Get all open pull requests relevant to the current user across all subscribed repositories and teams"""
+        try:
+            # Build the query for user-relevant PRs
+            conditions = []
+            
+            # PRs from subscribed repositories
+            if subscribed_repos:
+                repo_condition = DBPullRequest.repository_name.in_(subscribed_repos)
+                conditions.append(repo_condition)
+            
+            # PRs from subscribed teams
+            if subscribed_teams:
+                team_conditions = []
+                for team_key in subscribed_teams:
+                    team_conditions.append(DBPullRequest.associated_teams.contains(team_key))
+                if team_conditions:
+                    from sqlalchemy import or_
+                    conditions.append(or_(*team_conditions))
+            
+            if not conditions:
+                return []
+            
+            # Combine all conditions with OR (PRs from repos OR teams)
+            from sqlalchemy import or_
+            combined_condition = or_(*conditions)
+            
+            # Filter for user-relevant PRs: assigned, review requested, or needs review
+            user_relevant_condition = or_(
+                DBPullRequest.user_is_assigned == True,
+                DBPullRequest.user_is_requested_reviewer == True,
+                # Note: status filtering for needs_review will be done in application logic
+                # since user_has_reviewed isn't stored in the database consistently
+            )
+            
+            result = await self.db.execute(
+                select(DBPullRequest).where(
+                    combined_condition,
+                    DBPullRequest.state == 'open',
+                    user_relevant_condition
+                ).order_by(DBPullRequest.github_updated_at.desc())
+            )
+            db_prs = result.scalars().all()
+            
+            return [json.loads(pr.pr_data) for pr in db_prs]
+            
+        except Exception as e:
+            logger.error(f"Error getting user relevant PRs: {e}")
+            return []
     
     async def update_pr_team_associations(self, pr_id: int, team_keys: List[str]) -> None:
         """Update which teams are associated with a PR"""

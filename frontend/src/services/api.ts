@@ -136,6 +136,17 @@ class ApiService {
     );
   }
 
+  // Get user-relevant pull requests (assigned, review requested, etc.)
+  async getUserRelevantPullRequests(): Promise<{
+    pull_requests: PullRequest[];
+    total_count: number;
+    sources: { repositories: number; teams: number };
+  }> {
+    return this.handleRequest(
+      axios.get(this.getUrl('/users/me/pull-requests'))
+    );
+  }
+
   // Health check
   async healthCheck(): Promise<{ status: string }> {
     return this.handleRequest(

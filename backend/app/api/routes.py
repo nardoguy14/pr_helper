@@ -547,3 +547,52 @@ async def refresh_team(organization: str, team_name: str):
     except Exception as e:
         logger.error(f"Error refreshing team {organization}/{team_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/me/pull-requests")
+async def get_user_relevant_pull_requests():
+    """Get all pull requests relevant to the current user (assigned, review requested, etc.)"""
+    try:
+        scheduler = get_scheduler()
+        
+        # Get subscribed repositories and teams
+        subscribed_repos = scheduler.get_subscribed_repositories()
+        subscribed_teams = scheduler.get_subscribed_teams()
+        
+        if not subscribed_repos and not subscribed_teams:
+            return {"pull_requests": []}
+        
+        # Get user-relevant PRs from database
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            user_prs = await db_service.get_user_relevant_pull_requests(
+                subscribed_repos=subscribed_repos,
+                subscribed_teams=subscribed_teams
+            )
+            break
+        
+        # Additional filtering for status-based conditions (needs_review && !user_has_reviewed)
+        # This is done here since user_has_reviewed isn't consistently stored in the database
+        filtered_prs = []
+        for pr in user_prs:
+            # Always include assigned PRs and review requests
+            if pr.get('user_is_assigned') or pr.get('user_is_requested_reviewer'):
+                filtered_prs.append(pr)
+            # Include PRs that need review and user hasn't reviewed
+            elif pr.get('status') == 'needs_review' and not pr.get('user_has_reviewed'):
+                filtered_prs.append(pr)
+        
+        logger.info(f"Retrieved {len(filtered_prs)} user-relevant PRs from {len(subscribed_repos)} repos and {len(subscribed_teams)} teams")
+        
+        return {
+            "pull_requests": filtered_prs,
+            "total_count": len(filtered_prs),
+            "sources": {
+                "repositories": len(subscribed_repos),
+                "teams": len(subscribed_teams)
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting user relevant pull requests: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

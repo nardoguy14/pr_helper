@@ -332,11 +332,13 @@ function App() {
 
   const {
     allPullRequests,
+    userRelevantPRs,
     expandedRepositories,
     loading: prsLoading,
     error: prsError,
     fetchPullRequestsForRepository,
     fetchPullRequestsForAllRepositories,
+    fetchUserRelevantPullRequests,
     toggleRepositoryExpansion,
     updatePullRequest,
     addPullRequest,
@@ -381,6 +383,13 @@ function App() {
       fetchPullRequestsForAllRepositories(repositoryNames);
     }
   }, [repositories, reposLoading, fetchPullRequestsForAllRepositories]);
+
+  // Load user-relevant PRs for notifications on app start and when teams change
+  useEffect(() => {
+    if ((repositories.length > 0 && !reposLoading) || (teams.length > 0 && !teamsLoading)) {
+      fetchUserRelevantPullRequests();
+    }
+  }, [repositories, reposLoading, teams, teamsLoading, fetchUserRelevantPullRequests]);
 
   // Request notification permissions on app start
   useEffect(() => {
@@ -772,14 +781,12 @@ function App() {
     });
   }, [teams, filteredTeamPullRequests]);
 
-  // Get PRs that need review from the current user
-  const reviewPRs = Object.entries(filteredPullRequests).flatMap(([repoName, prs]) =>
-    prs
-      .filter(pr => 
-        pr.user_is_requested_reviewer || 
-        (pr.status === 'needs_review' && !pr.user_has_reviewed)
-      )
-      .map(pr => ({ ...pr, repositoryName: repoName }))
+  // Get PRs that need attention from the current user (assigned, review requested, etc.)
+  // Now includes assigned PRs that were missing before!
+  const reviewPRs = userRelevantPRs.filter(pr => 
+    pr.user_is_assigned ||                    // Assigned PRs (was missing!)
+    pr.user_is_requested_reviewer || 
+    (pr.status === 'needs_review' && !pr.user_has_reviewed)
   );
 
   return (
@@ -814,7 +821,7 @@ function App() {
               )}
               <NotificationsDropdown $visible={showNotifications}>
                 <NotificationsPanelComponent
-                  allPullRequests={filteredPullRequests}
+                  userRelevantPRs={reviewPRs}
                   onPRClick={handlePRClick}
                 />
               </NotificationsDropdown>

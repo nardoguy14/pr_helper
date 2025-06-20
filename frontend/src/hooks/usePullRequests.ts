@@ -4,11 +4,13 @@ import { PullRequest } from '../types';
 
 interface UsePullRequestsReturn {
   allPullRequests: Record<string, PullRequest[]>; // repositoryName -> PullRequest[]
+  userRelevantPRs: PullRequest[]; // PRs relevant to current user (assigned, review requested, etc.)
   expandedRepositories: Set<string>;
   loading: boolean;
   error: string | null;
   fetchPullRequestsForRepository: (repositoryName: string) => Promise<void>;
   fetchPullRequestsForAllRepositories: (repositoryNames: string[]) => Promise<void>;
+  fetchUserRelevantPullRequests: () => Promise<void>;
   toggleRepositoryExpansion: (repositoryName: string) => void;
   updatePullRequest: (repositoryName: string, updatedPR: PullRequest) => void;
   removePullRequest: (repositoryName: string, prNumber: number) => void;
@@ -19,6 +21,7 @@ interface UsePullRequestsReturn {
 
 export function usePullRequests(): UsePullRequestsReturn {
   const [allPullRequests, setAllPullRequests] = useState<Record<string, PullRequest[]>>({});
+  const [userRelevantPRs, setUserRelevantPRs] = useState<PullRequest[]>([]);
   const [expandedRepositories, setExpandedRepositories] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +80,21 @@ export function usePullRequests(): UsePullRequestsReturn {
     }
   }, []);
 
+  const fetchUserRelevantPullRequests = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await apiService.getUserRelevantPullRequests();
+      setUserRelevantPRs(response.pull_requests || []);
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Failed to fetch user relevant pull requests:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const toggleRepositoryExpansion = useCallback((repositoryName: string) => {
     setExpandedRepositories(prev => {
       const newSet = new Set(prev);
@@ -130,11 +148,13 @@ export function usePullRequests(): UsePullRequestsReturn {
 
   return {
     allPullRequests,
+    userRelevantPRs,
     expandedRepositories,
     loading,
     error,
     fetchPullRequestsForRepository,
     fetchPullRequestsForAllRepositories,
+    fetchUserRelevantPullRequests,
     toggleRepositoryExpansion,
     updatePullRequest,
     removePullRequest,

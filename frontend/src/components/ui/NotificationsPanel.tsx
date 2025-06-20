@@ -4,7 +4,7 @@ import { Bell, GitPullRequest } from 'lucide-react';
 import { PullRequest } from '../../types';
 
 interface NotificationsPanelProps {
-  allPullRequests: Record<string, PullRequest[]>;
+  userRelevantPRs: PullRequest[];
   onPRClick?: (pr: PullRequest) => void;
 }
 
@@ -122,18 +122,12 @@ const EmptyState = styled.div`
 `;
 
 export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
-  allPullRequests,
+  userRelevantPRs,
   onPRClick
 }) => {
-  // Get PRs that need review from the current user
-  const reviewPRs = Object.entries(allPullRequests).flatMap(([repoName, prs]) =>
-    prs
-      .filter(pr => 
-        pr.user_is_requested_reviewer || 
-        (pr.status === 'needs_review' && !pr.user_has_reviewed)
-      )
-      .map(pr => ({ ...pr, repositoryName: repoName }))
-  );
+  // User-relevant PRs are already filtered by the backend/hook
+  // They include: assigned PRs, review requests, and PRs needing review
+  const reviewPRs = userRelevantPRs;
 
   const handlePRClick = (pr: PullRequest) => {
     if (onPRClick) {
@@ -167,7 +161,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
         ) : (
           reviewPRs.map((pr) => (
             <NotificationItem
-              key={`${pr.repositoryName}-${pr.number}`}
+              key={`${pr.repository.full_name}-${pr.number}`}
               onClick={() => handlePRClick(pr)}
             >
               <NotificationContent>
@@ -180,7 +174,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
                     <TimeAgo>{formatTimeAgo(pr.created_at)}</TimeAgo>
                   </NotificationTitle>
                   <NotificationMeta>
-                    <RepositoryName>{pr.repositoryName}</RepositoryName>
+                    <RepositoryName>{pr.repository.full_name}</RepositoryName>
                     <span>•</span>
                     <span>by {pr.user.login}</span>
                   </NotificationMeta>
