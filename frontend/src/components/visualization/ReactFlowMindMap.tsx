@@ -201,12 +201,14 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         
         if (existingNode) {
           // Update existing node data
+          const isExpanded = expandedRepositories.has(repoId);
+          console.log(`Updating direct repo node ${repoId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
           updatedNodes.push({
             ...existingNode,
             data: {
               ...existingNode.data,
               repository: repo,
-              isExpanded: expandedRepositories.has(repoId),
+              isExpanded: isExpanded,
             },
           });
         } else {
@@ -219,13 +221,15 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           const repoX = centerX + Math.cos(repoAngle) * repoRadius;
           const repoY = centerY + Math.sin(repoAngle) * repoRadius;
           
+          const isExpanded = expandedRepositories.has(repoId);
+          console.log(`Creating direct repo node ${repoId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
           updatedNodes.push({
             id: repoId,
             type: 'repository',
             position: { x: repoX, y: repoY },
             data: {
               repository: repo,
-              isExpanded: expandedRepositories.has(repoId),
+              isExpanded: isExpanded,
               onClick: onRepositoryClick,
             },
             sourcePosition: Position.Bottom,
@@ -373,13 +377,15 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
               last_updated: new Date().toISOString()
             };
 
+            const isExpanded = expandedRepositories.has(repoNodeId);
+            console.log(`Creating team repo node ${repoNodeId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
             return {
               id: repoNodeId,
               type: 'repository',
               position: { x: repoX, y: repoY },
               data: {
                 repository: repoStats,
-                isExpanded: expandedRepositories.has(repoNodeId),
+                isExpanded: isExpanded,
                 onClick: onRepositoryClick,
               },
               sourcePosition: Position.Bottom,
@@ -758,6 +764,33 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
     }, 100);
   }, [expandedRepositories, allPullRequests, onPRClick, reactFlowNodes]);
 
+  // Update repository node colors when expandedRepositories changes
+  useEffect(() => {
+    console.log('Updating repository node colors, expandedRepositories:', Array.from(expandedRepositories));
+    
+    setNodes(currentNodes => {
+      const updatedNodes = currentNodes.map(node => {
+        if (node.type === 'repository') {
+          const isExpanded = expandedRepositories.has(node.id);
+          const currentIsExpanded = node.data.isExpanded;
+          
+          if (isExpanded !== currentIsExpanded) {
+            console.log(`Updating repository node ${node.id}: isExpanded ${currentIsExpanded} -> ${isExpanded}`);
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                isExpanded: isExpanded,
+              }
+            };
+          }
+        }
+        return node;
+      });
+      
+      return updatedNodes;
+    });
+  }, [expandedRepositories, setNodes]);
 
   const onConnect = useCallback(
     (params: any) => setEdges((eds) => addEdge(params, eds)),

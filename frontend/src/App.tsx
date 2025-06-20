@@ -713,10 +713,13 @@ function App() {
     setExpandedRepositoryNodes(prev => {
       const newSet = new Set(prev);
       if (newSet.has(nodeId)) {
+        console.log('Removing nodeId from expanded:', nodeId);
         newSet.delete(nodeId);
       } else {
+        console.log('Adding nodeId to expanded:', nodeId);
         newSet.add(nodeId);
       }
+      console.log('New expandedRepositoryNodes:', Array.from(newSet));
       return newSet;
     });
     

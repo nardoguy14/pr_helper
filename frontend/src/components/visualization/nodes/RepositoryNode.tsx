@@ -14,7 +14,7 @@ const NodeContainer = styled.div<{ $isExpanded: boolean; $color: string }>`
   height: 120px;
   padding: 12px;
   background: white;
-  border: 3px solid ${props => props.$isExpanded ? '#0366d6' : props.$color};
+  border: 3px solid ${props => props.$color};
   border-radius: 50%;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   cursor: pointer;
@@ -70,21 +70,24 @@ const ReviewCount = styled.div`
   margin-top: 2px;
 `;
 
-const getRepositoryColor = (repo: RepositoryStats): string => {
+const getRepositoryColor = (repo: RepositoryStats, isExpanded: boolean): string => {
+  // Dark colors when expanded, light colors when not expanded
   if (repo.review_requests > 0) {
-    return PR_STATUS_COLORS.needs_review;
+    return isExpanded ? PR_STATUS_COLORS.needs_review : '#ffcccb'; // Dark orange -> Light orange
   } else if (repo.assigned_to_user > 0) {
-    return '#0366d6';
+    return isExpanded ? '#0366d6' : '#87ceeb'; // Dark blue -> Light blue
   } else if (repo.total_open_prs > 0) {
-    return '#28a745';
+    return isExpanded ? '#28a745' : '#90ee90'; // Dark green -> Light green
   } else {
-    return '#6a737d';
+    return isExpanded ? '#6a737d' : '#d3d3d3'; // Dark gray -> Light gray
   }
 };
 
 export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data, id }) => {
   const { repository, isExpanded, onClick } = data;
-  const color = getRepositoryColor(repository);
+  const color = getRepositoryColor(repository, isExpanded);
+  
+  console.log(`RepositoryNode ${id} (${repository.repository.name}): isExpanded=${isExpanded}, color=${color}`);
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();

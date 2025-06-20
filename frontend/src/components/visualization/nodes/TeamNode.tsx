@@ -15,8 +15,9 @@ const NodeContainer = styled.div<{ $isExpanded: boolean; $isEnabled: boolean }>`
   padding: 12px;
   background: white;
   border: 3px solid ${props => 
-    props.$isExpanded ? '#28a745' : 
-    props.$isEnabled ? '#6f42c1' : '#d0d7de'
+    props.$isExpanded ? '#6f42c1' :      // Dark purple when expanded (active)
+    props.$isEnabled ? '#b19cd9' :       // Light purple when enabled but not expanded
+    '#d0d7de'                            // Gray when disabled
   };
   border-radius: 50%;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
