@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // App info
   getVersion: () => ipcRenderer.invoke('get-app-version'),
+  getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
   
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external-link', url),
@@ -28,6 +29,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       icon: options.icon,
       silent: options.silent || false
     });
+  },
+  
+  // Badge count for macOS dock
+  setBadgeCount: (count) => {
+    return ipcRenderer.invoke('set-badge-count', count);
+  },
+  
+  // Tray notification for menu bar
+  setTrayNotification: (hasNotifications) => {
+    return ipcRenderer.invoke('set-tray-notification', hasNotifications);
   },
   
   // Backend communication (if needed in future)

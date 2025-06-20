@@ -7,7 +7,7 @@ from app.core.config import settings
 # Create async engine for database operations
 engine = create_async_engine(
     settings.DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://"),
-    echo=True,
+    echo=False,
     future=True
 )
 

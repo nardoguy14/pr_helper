@@ -25,6 +25,7 @@ const NodeContainer = styled.div<{ $color: string }>`
   justify-content: center;
   text-align: center;
   box-sizing: border-box;
+  position: relative;
   
   &:hover {
     transform: scale(1.15);
@@ -115,6 +116,23 @@ const TooltipValue = styled.span`
   overflow-wrap: break-word;
 `;
 
+const PRIcon = styled.div`
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #e36209;
+  color: white;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: bold;
+  z-index: 1;
+`;
+
 const getPRColor = (pr: PullRequest): string => {
   // Check if PR needs user review - mark as yellow
   if (pr.user_is_requested_reviewer || (pr.status === 'needs_review' && !pr.user_has_reviewed)) {
@@ -191,6 +209,7 @@ export const PRNode: React.FC<NodeProps<PRNodeData>> = ({ data }) => {
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
+        <PRIcon>PR</PRIcon>
         <PRNumber $textColor={textColor}>{pullRequest.user.login}</PRNumber>
         <PRTitle $textColor={textColor}>{pullRequest.title}</PRTitle>
       </NodeContainer>

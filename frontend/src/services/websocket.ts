@@ -29,6 +29,7 @@ class WebSocketService {
   private reconnectInterval: number = 3000;
   private isConnecting: boolean = false;
   private shouldReconnect: boolean = true;
+  private pingInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     // Generate a unique user ID for this session
@@ -73,12 +74,27 @@ class WebSocketService {
           console.log('WebSocket readyState on open:', this.ws?.readyState);
           this.isConnecting = false;
           this.reconnectAttempts = 0;
+          
+          // Start sending heartbeat pings every 20 seconds
+          this.startPingInterval();
+          
           this.eventHandlers.onConnectionEstablished?.();
           resolve();
         };
 
         this.ws.onmessage = (event) => {
           try {
+            // Handle ping/pong messages
+            if (event.data === 'ping') {
+              console.log('📡 Received ping, sending pong');
+              this.ws?.send('pong');
+              return;
+            }
+            if (event.data === 'pong') {
+              console.log('📡 Received pong - connection alive');
+              return;
+            }
+            
             const message: WebSocketMessage = JSON.parse(event.data);
             this.handleMessage(message);
           } catch (error) {
@@ -90,6 +106,12 @@ class WebSocketService {
           console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
           this.isConnecting = false;
           this.ws = null;
+          
+          // Clear ping interval on disconnect
+          if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+          }
           
           // Only show error if connection was not clean
           if (!event.wasClean) {
@@ -163,6 +185,13 @@ class WebSocketService {
 
   disconnect() {
     this.shouldReconnect = false;
+    
+    // Clear ping interval
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+    
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -187,6 +216,27 @@ class WebSocketService {
 
   getUserId(): string {
     return this.userId;
+  }
+
+  private startPingInterval() {
+    // Clear any existing interval
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+    }
+    
+    // Send ping every 20 seconds to keep connection alive
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        console.log('📡 Sending ping to keep connection alive');
+        this.ws.send('ping');
+      } else {
+        // Clear interval if connection is not open
+        if (this.pingInterval) {
+          clearInterval(this.pingInterval);
+          this.pingInterval = null;
+        }
+      }
+    }, 20000); // 20 seconds
   }
 }
 

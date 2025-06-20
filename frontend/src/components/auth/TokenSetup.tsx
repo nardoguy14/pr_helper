@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import { Eye, EyeOff, ExternalLink, Check, AlertCircle, Loader } from 'lucide-react';
 
@@ -218,15 +218,20 @@ export const TokenSetup: React.FC<TokenSetupProps> = ({ onTokenSet, isVisible, s
     setStatus(null);
 
     try {
+      console.log('TokenSetup: Starting token validation...');
       const result = await authSetToken(token.trim());
+      console.log('TokenSetup: Auth result:', result);
       
       if (result.success) {
+        console.log('TokenSetup: Token validation successful, user:', result.user);
         setStatus({ type: 'success', message: `Welcome, ${result.user?.login || 'User'}!` });
         onTokenSet(token.trim(), result.user);
       } else {
+        console.error('TokenSetup: Token validation failed:', result.error);
         setStatus({ type: 'error', message: result.error || 'Token validation failed' });
       }
     } catch (error) {
+      console.error('TokenSetup: Exception during token validation:', error);
       setStatus({ type: 'error', message: 'Network error. Please check your connection and try again.' });
     } finally {
       setIsValidating(false);

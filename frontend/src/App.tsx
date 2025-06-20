@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import styled, { createGlobalStyle } from 'styled-components';
-import { Plus, ArrowLeft, ChevronLeft, ChevronRight, Bell } from 'lucide-react';
+import { Plus, ArrowLeft, ChevronLeft, ChevronRight, Bell, User, LogOut } from 'lucide-react';
 
 import { ReactFlowMindMap } from './components/visualization/ReactFlowMindMap';
 import { PRDirectedGraph } from './components/visualization/PRDirectedGraph';
@@ -233,6 +233,81 @@ const NotificationsList = styled.div`
   overflow-y: auto;
 `;
 
+const UserMenuButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #24292e;
+  transition: all 0.2s ease;
+  position: relative;
+  
+  &:hover {
+    background: #f6f8fa;
+    border-color: #d0d7de;
+  }
+`;
+
+const UserAvatar = styled.img`
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+`;
+
+const UserMenuDropdown = styled.div<{ $visible: boolean }>`
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  min-width: 200px;
+  background: white;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(140, 149, 159, 0.2);
+  opacity: ${props => props.$visible ? '1' : '0'};
+  transform: translateY(${props => props.$visible ? '0' : '-10px'});
+  visibility: ${props => props.$visible ? 'visible' : 'hidden'};
+  transition: all 0.2s ease;
+  z-index: 100;
+  overflow: hidden;
+`;
+
+const UserMenuHeader = styled.div`
+  padding: 12px 16px;
+  border-bottom: 1px solid #e1e4e8;
+  font-weight: 600;
+  color: #24292e;
+`;
+
+const UserMenuItem = styled.button`
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #24292e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease;
+  text-align: left;
+  
+  &:hover {
+    background: #f6f8fa;
+  }
+  
+  &:focus {
+    outline: none;
+    background: #f6f8fa;
+  }
+`;
+
 const RepositoriesToggle = styled.button<{ $collapsed: boolean }>`
   position: fixed;
   top: 50%;
@@ -292,6 +367,7 @@ function App() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentView, setCurrentView] = useState<'mindmap' | 'pr-graph'>('mindmap');
   const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(true);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
   const [expandedRepositoryNodes, setExpandedRepositoryNodes] = useState<Set<string>>(new Set());
@@ -315,9 +391,63 @@ function App() {
     user, 
     isLoading: authLoading, 
     error: authError, 
+    rateLimited,
     setToken, 
     clearToken 
   } = useAuth();
+
+  // Debug authentication state changes
+  useEffect(() => {
+    console.log('App: Authentication state changed:', {
+      isAuthenticated,
+      user: user?.login,
+      authLoading,
+      authError
+    });
+  }, [isAuthenticated, user, authLoading, authError]);
+  
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('[data-user-menu]')) {
+        setShowUserMenu(false);
+      }
+      if (!target.closest('[data-notifications]')) {
+        setShowNotifications(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Debug backend status in Electron
+  useEffect(() => {
+    if (window.electronAPI && (window.electronAPI as any).getBackendStatus) {
+      const checkBackendStatus = async () => {
+        try {
+          const status = await (window.electronAPI as any).getBackendStatus();
+          console.log('Backend Status:', status);
+          
+          // Show backend logs in console
+          if (status.logs) {
+            status.logs.forEach((log: any) => {
+              console.log(`[Backend ${log.type}] ${log.timestamp}: ${log.message}`);
+            });
+          }
+        } catch (error) {
+          console.error('Failed to get backend status:', error);
+        }
+      };
+
+      checkBackendStatus();
+      
+      // Check backend status every 5 seconds
+      const interval = setInterval(checkBackendStatus, 5000);
+      return () => clearInterval(interval);
+    }
+  }, []);
 
   // Hooks
   const {
@@ -876,6 +1006,41 @@ function App() {
     // The authentication state should already be updated by the TokenSetup component
     // Just trigger any additional data refresh if needed
   };
+  
+  // Handle logout
+  const handleLogout = async () => {
+    console.log('Logging out...');
+    setShowUserMenu(false);
+    await clearToken();
+    // Clear all data
+    clearAllPullRequests();
+    // Clear dock badge and tray notification
+    if (window.electronAPI) {
+      if (window.electronAPI.setBadgeCount) {
+        window.electronAPI.setBadgeCount(0);
+      }
+      if (window.electronAPI.setTrayNotification) {
+        window.electronAPI.setTrayNotification(0);
+      }
+    }
+  };
+
+  // Update macOS dock badge and tray icon when review count changes
+  useEffect(() => {
+    if (window.electronAPI) {
+      console.log(`🔴 Updating dock badge and tray icon with ${reviewPRs.length} pending reviews`);
+      
+      // Update dock badge
+      if (window.electronAPI.setBadgeCount) {
+        window.electronAPI.setBadgeCount(reviewPRs.length);
+      }
+      
+      // Update tray icon
+      if (window.electronAPI.setTrayNotification) {
+        window.electronAPI.setTrayNotification(reviewPRs.length);
+      }
+    }
+  }, [reviewPRs.length]);
 
   // Show loading screen while checking authentication
   if (authLoading) {
@@ -892,6 +1057,33 @@ function App() {
     );
   }
 
+  // Rate Limit Banner Component
+  const RateLimitBanner = () => {
+    if (!rateLimited) return null;
+    
+    return (
+      <div style={{
+        backgroundColor: '#fff3cd',
+        border: '1px solid #ffeaa7',
+        borderRadius: '4px',
+        padding: '12px 16px',
+        margin: '16px',
+        display: 'flex',
+        alignItems: 'center',
+        color: '#856404'
+      }}>
+        <span style={{ marginRight: '8px' }}>⚠️</span>
+        <div>
+          <strong>GitHub API Rate Limited</strong>
+          <div style={{ fontSize: '14px', marginTop: '4px' }}>
+            Your GitHub token is still valid, but API requests are temporarily limited. 
+            Please wait a few minutes before making more requests.
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <GlobalStyle />
@@ -901,6 +1093,7 @@ function App() {
         setToken={setToken}
       />
       <AppContainer>
+        <RateLimitBanner />
         <Header>
           <HeaderLeft>
             <Logo>
@@ -919,6 +1112,7 @@ function App() {
               error={wsError} 
             />
             <NotificationsButton
+              data-notifications
               ref={notificationsRef}
               $hasNotifications={reviewPRs.length > 0}
               onClick={() => setShowNotifications(!showNotifications)}
@@ -934,6 +1128,24 @@ function App() {
                 />
               </NotificationsDropdown>
             </NotificationsButton>
+            
+            {user && (
+              <UserMenuButton data-user-menu onClick={() => setShowUserMenu(!showUserMenu)}>
+                {user.avatar_url ? (
+                  <UserAvatar src={user.avatar_url} alt={user.login} />
+                ) : (
+                  <User size={20} />
+                )}
+                <span>{user.login}</span>
+                <UserMenuDropdown $visible={showUserMenu}>
+                  <UserMenuHeader>Signed in as {user.login}</UserMenuHeader>
+                  <UserMenuItem onClick={handleLogout}>
+                    <LogOut size={16} />
+                    Change GitHub Token
+                  </UserMenuItem>
+                </UserMenuDropdown>
+              </UserMenuButton>
+            )}
           </HeaderRight>
         </Header>
 

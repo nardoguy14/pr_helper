@@ -7,6 +7,8 @@ declare global {
       platform: string;
       isDev: boolean;
       showNotification: (title: string, body: string) => Notification;
+      setBadgeCount: (count: number) => Promise<boolean>;
+      setTrayNotification: (hasNotifications: number) => Promise<boolean>;
       minimizeWindow: () => void;
       maximizeWindow: () => void;
       closeWindow: () => void;
@@ -27,10 +29,19 @@ export const openExternal = async (url: string): Promise<void> => {
 };
 
 export const showNotification = (title: string, body: string): void => {
+  console.log(`🔔 Attempting to show notification: "${title}" - "${body}"`);
+  console.log(`Is Electron: ${isElectron()}`);
+  console.log(`Has electronAPI: ${!!(window.electronAPI)}`);
+  
   if (isElectron() && window.electronAPI) {
+    console.log('📱 Showing Electron notification');
     window.electronAPI.showNotification(title, body);
   } else if ('Notification' in window && Notification.permission === 'granted') {
+    console.log('🌐 Showing browser notification');
     new Notification(title, { body });
+  } else {
+    console.log('❌ Cannot show notification - no permission or API available');
+    console.log(`Notification permission: ${window.Notification?.permission || 'N/A'}`);
   }
 };
 

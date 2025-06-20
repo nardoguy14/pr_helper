@@ -19,6 +19,9 @@ const Container = styled.div`
   border: 1px solid #e1e4e8;
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 600px; /* Limit height to ensure scrollability */
 `;
 
 const Header = styled.div`
@@ -28,6 +31,13 @@ const Header = styled.div`
   font-weight: 600;
   color: #24292e;
   font-size: 16px;
+  flex-shrink: 0; /* Prevent header from shrinking */
+`;
+
+const ScrollableContent = styled.div`
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 `;
 
 const EmptyState = styled.div`
@@ -213,8 +223,9 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
         Subscriptions ({totalCount})
       </Header>
       
-      {/* Repository Subscriptions */}
-      {repositories.map(repo => (
+      <ScrollableContent>
+        {/* Repository Subscriptions */}
+        {repositories.map(repo => (
         <SubscriptionItem key={`repo-${repo.repository.full_name}`}>
           <SubscriptionHeader>
             <SubscriptionName>
@@ -376,6 +387,7 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
           </LastUpdated>
         </SubscriptionItem>
       ))}
+      </ScrollableContent>
     </Container>
   );
 };

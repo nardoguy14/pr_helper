@@ -8,7 +8,6 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.core.config import settings
 from app.services.github_service import GitHubService
 from app.services.websocket_manager import websocket_manager
-from app.services.slack_service import slack_service
 from app.services.database_service import DatabaseService
 from app.services.token_service import token_service
 from app.database.database import get_db
@@ -172,9 +171,7 @@ class PRMonitorScheduler:
                 db_service = DatabaseService(db)
                 # Convert PullRequest models to dicts for database
                 pr_dicts = [pr.dict() for pr in current_prs]
-                await db_service.upsert_pull_requests(pr_dicts)
-                # Delete closed PRs from database
-                await db_service.delete_closed_pull_requests()
+                await db_service.upsert_pull_requests(pr_dicts, repo_name)
                 break
             
             await self._handle_pr_changes(
@@ -252,8 +249,6 @@ class PRMonitorScheduler:
                             associated_teams.add(other_team_key)
                     await db_service.update_pr_team_associations(int(pr.id), list(associated_teams))
                 
-                # Delete closed PRs from database
-                await db_service.delete_closed_pull_requests()
                 break
             
             await self._handle_team_pr_changes(
@@ -302,7 +297,6 @@ class PRMonitorScheduler:
                 db_service = DatabaseService(db)
                 pr_dicts = [pr.dict() for pr in current_prs]
                 await db_service.upsert_pull_requests(pr_dicts)
-                await db_service.delete_closed_pull_requests()
                 break
             
             # Send notifications and stats updates
@@ -477,11 +471,8 @@ class PRMonitorScheduler:
         
         slack_notification_type = notification_type_map.get(notification_type, "pr_updated")
         
-        try:
-            async with slack_service as slack:
-                await slack.send_pr_review_notification(pr, slack_notification_type)
-        except Exception as e:
-            logger.error(f"Failed to send Slack notification for PR {pr.number}: {e}")
+        # Slack notifications disabled - using WebSocket and macOS notifications instead
+        logger.debug(f"PR notification would be sent for PR {pr.number} (type: {slack_notification_type})")
     
     async def _send_repository_stats_update(self, repo_name: str, prs: List[PullRequest]):
         try:

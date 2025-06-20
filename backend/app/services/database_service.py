@@ -299,18 +299,16 @@ class DatabaseService:
         await self.db.commit()
         await self.db.refresh(db_stats)
         
-        return RepositoryStats(
-            repository_name=db_stats.repository_name,
-            total_open_prs=db_stats.total_open_prs,
-            assigned_to_user=db_stats.assigned_to_user,
-            review_requests=db_stats.review_requests,
-            code_owner_prs=db_stats.code_owner_prs,
-            last_updated=db_stats.last_updated
-        )
+        # Return None since we don't have the full Repository object needed for RepositoryStats
+        # This method is just for updating the database
+        return None
     
     # Pull Request Operations
-    async def upsert_pull_requests(self, pull_requests: List[dict]) -> None:
-        """Insert or update multiple pull requests"""
+    async def upsert_pull_requests(self, pull_requests: List[dict], repository_name: str = None) -> None:
+        """Insert or update multiple pull requests and remove ones no longer open"""
+        # Get list of GitHub IDs that came back from API
+        returned_pr_ids = {pr_data['id'] for pr_data in pull_requests}
+        
         for pr_data in pull_requests:
             # Check if PR exists
             result = await self.db.execute(
@@ -372,6 +370,29 @@ class DatabaseService:
                     pr_data=json.dumps(self._convert_datetimes_to_strings(pr_data))
                 )
                 self.db.add(db_pr)
+        
+        # Remove PRs that are no longer open (didn't come back from API)
+        if repository_name:
+            # For repository-specific updates, only remove PRs from that repository
+            existing_prs = await self.db.execute(
+                select(DBPullRequest).where(
+                    DBPullRequest.repository_name == repository_name,
+                    DBPullRequest.state == 'open'
+                )
+            )
+            existing_pr_ids = {pr.github_id for pr in existing_prs.scalars().all()}
+            
+            # PRs that exist in DB but not in API response are now closed
+            closed_pr_ids = existing_pr_ids - returned_pr_ids
+            
+            if closed_pr_ids:
+                logger.info(f"Removing {len(closed_pr_ids)} closed PRs from repository {repository_name}")
+                await self.db.execute(
+                    delete(DBPullRequest).where(
+                        DBPullRequest.github_id.in_(closed_pr_ids),
+                        DBPullRequest.repository_name == repository_name
+                    )
+                )
         
         await self.db.commit()
     
@@ -461,12 +482,10 @@ class DatabaseService:
             await self.db.commit()
     
     async def delete_closed_pull_requests(self) -> int:
-        """Delete PRs that have been closed"""
-        result = await self.db.execute(
-            delete(DBPullRequest).where(DBPullRequest.state == 'closed')
-        )
-        await self.db.commit()
-        return result.rowcount
+        """Legacy method - closed PRs are now handled by upsert_pull_requests"""
+        # This method is kept for compatibility but does nothing
+        # Closed PR cleanup is now handled in upsert_pull_requests()
+        return 0
     
     async def get_all_pull_requests(self) -> List[dict]:
         """Get all open pull requests"""

@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# Health check endpoint for debugging
+@router.get("/health")
+async def health_check():
+    """Simple health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "backend_running": True
+    }
+
+
 # Authentication endpoints
 @router.post("/auth/token")
 async def set_github_token(request: dict):
@@ -72,10 +83,57 @@ async def get_auth_status():
     try:
         return {
             "authenticated": token_service.is_token_valid,
-            "user": token_service.user_info if token_service.is_token_valid else None
+            "user": token_service.user_info if token_service.is_token_valid else None,
+            "last_validated": token_service.last_validated.isoformat() if token_service.last_validated else None,
+            "needs_revalidation": False  # Will be enhanced with periodic validation
         }
     except Exception as e:
         logger.error(f"Error getting auth status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/auth/validate")
+async def validate_github_token():
+    """Validate the current GitHub token"""
+    try:
+        if not token_service.token:
+            raise HTTPException(status_code=401, detail="No token set")
+        
+        # Try to validate with GitHub API directly to get proper status codes
+        import aiohttp
+        headers = token_service.get_auth_headers()
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get('https://api.github.com/user', headers=headers) as response:
+                if response.status == 200:
+                    # Token is valid
+                    user_data = await response.json()
+                    return {
+                        "valid": True,
+                        "user": user_data,
+                        "last_validated": token_service.last_validated.isoformat() if token_service.last_validated else None
+                    }
+                elif response.status == 401:
+                    # Token is actually invalid/expired
+                    return {
+                        "valid": False,
+                        "error": "Token is invalid or expired. Please update your GitHub token.",
+                        "user": None
+                    }
+                elif response.status == 403:
+                    # Rate limited - token is still valid but can't make requests
+                    raise HTTPException(
+                        status_code=403, 
+                        detail="GitHub API rate limit exceeded. Token is still valid but requests are temporarily limited."
+                    )
+                else:
+                    # Other error
+                    raise HTTPException(status_code=response.status, detail=f"GitHub API error: {response.status}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating GitHub token: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -191,6 +249,7 @@ async def get_subscribed_repositories():
                         ])
                     
                     stats = RepositoryStats(
+                        repository_name=repo_name,
                         repository=repository,
                         total_open_prs=len(prs),
                         assigned_to_user=assigned_count,
@@ -282,10 +341,27 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket_manager.connect(websocket, user_id)
     try:
         while True:
-            data = await websocket.receive_text()
-            # Handle incoming WebSocket messages if needed
-            logger.info(f"Received message from {user_id}: {data}")
+            # Use asyncio.wait_for with timeout to handle potential disconnections
+            import asyncio
+            try:
+                # Wait for message with 30 second timeout
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # Handle incoming WebSocket messages if needed
+                logger.debug(f"Received message from {user_id}: {data}")
+                
+                # Respond to ping messages to keep connection alive
+                if data.strip().lower() in ['ping', 'heartbeat']:
+                    await websocket.send_text('pong')
+                    
+            except asyncio.TimeoutError:
+                # Send ping to check if connection is still alive
+                try:
+                    await websocket.send_text('ping')
+                except:
+                    # Connection is dead, break the loop
+                    break
     except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected for user {user_id}")
         websocket_manager.disconnect(user_id)
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")

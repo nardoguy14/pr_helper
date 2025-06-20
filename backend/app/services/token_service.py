@@ -36,6 +36,11 @@ class TokenService:
         """Get authenticated user information"""
         return self._user_info
     
+    @property
+    def last_validated(self) -> Optional[datetime]:
+        """Get the timestamp when token was last validated"""
+        return self._last_validated
+    
     async def set_token(self, token: str) -> bool:
         """
         Set and validate a new GitHub token
@@ -105,6 +110,11 @@ class TokenService:
                         return True
                     elif response.status == 401:
                         logger.error("GitHub token is invalid or expired")
+                        return False
+                    elif response.status == 403:
+                        logger.warning("GitHub API rate limit exceeded")
+                        # For rate limiting, we don't invalidate the token
+                        # The frontend should handle this differently
                         return False
                     else:
                         logger.error(f"GitHub API error: {response.status}")

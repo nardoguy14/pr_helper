@@ -12,16 +12,18 @@
     "start:electron": "electron .",
     "start:electron-dev": "ELECTRON_IS_DEV=1 electron .",
     "build:frontend": "cd frontend && npm run build",
-    "build": "npm run build:frontend && electron-builder",
-    "dist": "npm run build:frontend && electron-builder --publish=never",
-    "dist:mac": "npm run build:frontend && electron-builder --mac",
-    "dist:win": "npm run build:frontend && electron-builder --win",
-    "dist:linux": "npm run build:frontend && electron-builder --linux"
+    "build:backend": "cd backend && pyinstaller pr-monitor-backend.spec",
+    "build:all": "npm run build:frontend && npm run build:backend",
+    "build": "npm run build:all && electron-builder",
+    "dist": "npm run build:all && electron-builder --publish=never",
+    "dist:mac": "npm run build:all && electron-builder --mac",
+    "dist:win": "npm run build:all && electron-builder --win",
+    "dist:linux": "npm run build:all && electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
     "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3",
     "wait-on": "^7.2.0"
   },
   "build": {
@@ -45,34 +47,20 @@
     ],
     "extraResources": [
       {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*",
-          "!venv/**/*",
-          "!__pycache__/**/*",
-          "!**/*.pyc",
-          "!.env",
-          "!*.log",
-          "!*.db"
-        ]
+        "from": "backend/dist/pr-monitor-backend",
+        "to": "pr-monitor-backend"
       }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "electron/icons/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "electron/entitlements.mac.plist",
-      "entitlementsInherit": "electron/entitlements.mac.plist"
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "win": {
-      "target": "nsis",
-      "icon": "electron/icons/icon.ico"
+      "target": "nsis"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "electron/icons/icon.png",
       "category": "Development"
     },
     "nsis": {

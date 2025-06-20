@@ -25,11 +25,28 @@ const NodeContainer = styled.div<{ $isExpanded: boolean; $color: string }>`
   justify-content: center;
   text-align: center;
   box-sizing: border-box;
+  position: relative;
   
   &:hover {
     transform: scale(1.05);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
   }
+`;
+
+const RepoIcon = styled.div`
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  background: #0366d6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
 `;
 
 const RepoName = styled.div`
@@ -91,6 +108,7 @@ export const RepositoryNode: React.FC<NodeProps<RepositoryNodeData>> = ({ data, 
         $color={color}
         onClick={handleClick}
       >
+        <RepoIcon>R</RepoIcon>
         <RepoName>{repository.repository.name}</RepoName>
         <Stats>
           {repository.total_open_prs} PRs
