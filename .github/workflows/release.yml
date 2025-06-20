@@ -58,6 +58,7 @@ jobs:
     - name: Package Electron app
       env:
         CI: false
+        CSC_IDENTITY_AUTO_DISCOVERY: false
       run: npm run dist:mac
       
     - name: Get version
