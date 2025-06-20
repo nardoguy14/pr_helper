@@ -398,6 +398,75 @@ function App() {
     });
   }, []);
 
+  // Track previous user-relevant PRs to detect new assignments/review requests
+  const [previousUserPRs, setPreviousUserPRs] = useState<PullRequest[]>([]);
+
+  // Detect new PR assignments and review requests for notifications
+  useEffect(() => {
+    if (userRelevantPRs.length === 0) return;
+
+    // Skip on first load to avoid notifications for existing PRs
+    if (previousUserPRs.length === 0) {
+      setPreviousUserPRs(userRelevantPRs);
+      return;
+    }
+
+    const newPRs = userRelevantPRs.filter(currentPR => 
+      !previousUserPRs.some(prevPR => prevPR.id === currentPR.id)
+    );
+
+    // Check for existing PRs with new assignments or review requests
+    const updatedPRs = userRelevantPRs.filter(currentPR => {
+      const prevPR = previousUserPRs.find(prev => prev.id === currentPR.id);
+      if (!prevPR) return false;
+
+      // Check if newly assigned
+      const newlyAssigned = !prevPR.user_is_assigned && currentPR.user_is_assigned;
+      // Check if newly requested for review
+      const newlyRequestedReview = !prevPR.user_is_requested_reviewer && currentPR.user_is_requested_reviewer;
+
+      return newlyAssigned || newlyRequestedReview;
+    });
+
+    // Send notifications for new PRs
+    newPRs.forEach(async (pr) => {
+      const { NotificationService } = await import('./services/notifications');
+      if (pr.user_is_assigned) {
+        await NotificationService.notifyNewAssignment(pr);
+      } else if (pr.user_is_requested_reviewer) {
+        await NotificationService.notifyNewReviewRequest(pr);
+      }
+    });
+
+    // Send notifications for updated PRs
+    updatedPRs.forEach(async (pr) => {
+      const { NotificationService } = await import('./services/notifications');
+      const prevPR = previousUserPRs.find(prev => prev.id === pr.id);
+      if (!prevPR) return;
+
+      if (!prevPR.user_is_assigned && pr.user_is_assigned) {
+        await NotificationService.notifyNewAssignment(pr);
+      } else if (!prevPR.user_is_requested_reviewer && pr.user_is_requested_reviewer) {
+        await NotificationService.notifyNewReviewRequest(pr);
+      }
+    });
+
+    // Update previous PRs for next comparison
+    setPreviousUserPRs(userRelevantPRs);
+  }, [userRelevantPRs, previousUserPRs]);
+
+  // Periodic refresh of user-relevant PRs for real-time notifications
+  useEffect(() => {
+    if (!fetchUserRelevantPullRequests) return;
+
+    // Refresh user-relevant PRs every 2 minutes to catch new assignments/reviews
+    const interval = setInterval(() => {
+      fetchUserRelevantPullRequests();
+    }, 2 * 60 * 1000); // 2 minutes
+
+    return () => clearInterval(interval);
+  }, [fetchUserRelevantPullRequests]);
+
   // Close notifications dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
