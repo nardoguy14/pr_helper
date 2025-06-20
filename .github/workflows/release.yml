@@ -7,6 +7,9 @@ on:
   # Allow manual workflow dispatch
   workflow_dispatch:
 
+permissions:
+  contents: write
+  
 jobs:
   build-and-release:
     runs-on: macos-latest
@@ -61,53 +64,40 @@ jobs:
       id: version
       run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
       
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+    - name: Create Release with GitHub CLI
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ steps.version.outputs.VERSION }}-${{ github.run_number }}
-        release_name: PR Monitor v${{ steps.version.outputs.VERSION }} Build ${{ github.run_number }}
-        body: |
-          ## PR Monitor Release
-          
-          **Version:** ${{ steps.version.outputs.VERSION }}
-          **Build:** ${{ github.run_number }}
-          **Commit:** ${{ github.sha }}
-          
-          ### Features in this release:
-          - Visual navigation path system with light → dark color hierarchy
-          - GitHub-style tray icons (🟢 green/🟡 yellow) for review status
-          - Complete node labeling: T (teams), R (repositories), PR (pull requests)
-          - Scrollable subscription lists
-          - Enhanced WebSocket stability
-          
-          ### Installation:
-          1. Download the DMG file below
-          2. Open the DMG and drag PR Monitor to Applications
-          3. Launch the app and enter your GitHub token
-          
-          **Note:** This is an unsigned application. On first launch, you may need to right-click and select "Open" or go to System Preferences > Security & Privacy to allow it to run.
-        draft: false
-        prerelease: false
+      run: |
+        TAG_NAME="v${{ steps.version.outputs.VERSION }}-${{ github.run_number }}"
+        RELEASE_NAME="PR Monitor v${{ steps.version.outputs.VERSION }} Build ${{ github.run_number }}"
         
-    - name: Upload DMG to Release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/PR Monitor-${{ steps.version.outputs.VERSION }}-arm64.dmg
-        asset_name: PR-Monitor-v${{ steps.version.outputs.VERSION }}-arm64.dmg
-        asset_content_type: application/octet-stream
+        # Create release notes
+        cat > release_notes.md << 'EOF'
+        ## PR Monitor Release
         
-    - name: Upload ZIP to Release  
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./dist/PR Monitor-${{ steps.version.outputs.VERSION }}-arm64-mac.zip
-        asset_name: PR-Monitor-v${{ steps.version.outputs.VERSION }}-arm64.zip
-        asset_content_type: application/zip
+        **Version:** ${{ steps.version.outputs.VERSION }}
+        **Build:** ${{ github.run_number }}
+        **Commit:** ${{ github.sha }}
+        
+        ### Features in this release:
+        - Visual navigation path system with light → dark color hierarchy
+        - GitHub-style tray icons (🟢 green/🟡 yellow) for review status
+        - Complete node labeling: T (teams), R (repositories), PR (pull requests)
+        - Scrollable subscription lists
+        - Enhanced WebSocket stability
+        
+        ### Installation:
+        1. Download the DMG file below
+        2. Open the DMG and drag PR Monitor to Applications
+        3. Launch the app and enter your GitHub token
+        
+        **Note:** This is an unsigned application. On first launch, you may need to right-click and select "Open" or go to System Preferences > Security & Privacy to allow it to run.
+        EOF
+        
+        # Create release and upload assets
+        gh release create "$TAG_NAME" \
+          --title "$RELEASE_NAME" \
+          --notes-file release_notes.md \
+          --latest \
+          "./dist/PR Monitor-${{ steps.version.outputs.VERSION }}-arm64.dmg#PR-Monitor-v${{ steps.version.outputs.VERSION }}-arm64.dmg" \
+          "./dist/PR Monitor-${{ steps.version.outputs.VERSION }}-arm64-mac.zip#PR-Monitor-v${{ steps.version.outputs.VERSION }}-arm64.zip"
