@@ -48,9 +48,13 @@ jobs:
         pip install pyinstaller
         
     - name: Build application
+      env:
+        CI: false
       run: npm run build:all
       
     - name: Package Electron app
+      env:
+        CI: false
       run: npm run dist:mac
       
     - name: Get version
