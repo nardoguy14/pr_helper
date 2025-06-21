@@ -52,6 +52,14 @@ function createWindow() {
   // Handle window closed
   mainWindow.on('closed', () => {
     mainWindow = null;
+    
+    // On macOS, when window is closed but app stays in dock,
+    // kill the backend process to prevent port conflicts
+    if (process.platform === 'darwin' && backendProcess && !app.isQuitting) {
+      addBackendLog('Window closed, stopping backend process...');
+      backendProcess.kill();
+      backendProcess = null;
+    }
   });
 
   // Handle external links
@@ -210,6 +218,10 @@ function createTray() {
       }
     } else {
       createWindow();
+      // Restart backend if it was killed when window closed
+      if (!backendProcess && !isDev) {
+        startBackend();
+      }
     }
   });
 }
@@ -497,6 +509,10 @@ app.on('activate', () => {
   // On macOS, re-create window when dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+    // Restart backend if it was killed when window closed
+    if (!backendProcess && !isDev) {
+      startBackend();
+    }
   }
 });
 

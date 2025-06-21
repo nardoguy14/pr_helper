@@ -231,6 +231,61 @@ class DatabaseService:
         ]
     
     # Repository Subscription Operations
+    async def create_repository_subscription(self, repo_sub: RepositorySubscription) -> RepositorySubscription:
+        """Create a new repository subscription"""
+        db_repo_sub = DBRepositorySubscription(
+            repository_name=repo_sub.repository_name,
+            watch_all_prs=repo_sub.watch_all_prs,
+            watch_assigned_prs=repo_sub.watch_assigned_prs,
+            watch_review_requests=repo_sub.watch_review_requests,
+            watch_code_owner_prs=repo_sub.watch_code_owner_prs,
+            teams=repo_sub.teams or []
+        )
+        
+        self.db.add(db_repo_sub)
+        await self.db.commit()
+        await self.db.refresh(db_repo_sub)
+        
+        return RepositorySubscription(
+            repository_name=db_repo_sub.repository_name,
+            watch_all_prs=db_repo_sub.watch_all_prs,
+            watch_assigned_prs=db_repo_sub.watch_assigned_prs,
+            watch_review_requests=db_repo_sub.watch_review_requests,
+            watch_code_owner_prs=db_repo_sub.watch_code_owner_prs,
+            teams=db_repo_sub.teams or []
+        )
+    
+    async def get_repository_subscription(self, repository_name: str) -> Optional[RepositorySubscription]:
+        """Get a specific repository subscription"""
+        result = await self.db.execute(
+            select(DBRepositorySubscription).where(
+                DBRepositorySubscription.repository_name == repository_name
+            )
+        )
+        db_repo_sub = result.scalar_one_or_none()
+        
+        if not db_repo_sub:
+            return None
+            
+        return RepositorySubscription(
+            repository_name=db_repo_sub.repository_name,
+            watch_all_prs=db_repo_sub.watch_all_prs,
+            watch_assigned_prs=db_repo_sub.watch_assigned_prs,
+            watch_review_requests=db_repo_sub.watch_review_requests,
+            watch_code_owner_prs=db_repo_sub.watch_code_owner_prs,
+            teams=db_repo_sub.teams or []
+        )
+    
+    async def delete_repository_subscription(self, repository_name: str) -> bool:
+        """Delete a repository subscription"""
+        result = await self.db.execute(
+            delete(DBRepositorySubscription).where(
+                DBRepositorySubscription.repository_name == repository_name
+            )
+        )
+        await self.db.commit()
+        return result.rowcount > 0
+    
     async def get_all_repository_subscriptions(self) -> List[RepositorySubscription]:
         """Get all repository subscriptions"""
         result = await self.db.execute(select(DBRepositorySubscription))
@@ -304,6 +359,81 @@ class DatabaseService:
         return None
     
     # Pull Request Operations
+    async def upsert_pull_requests_graphql(self, pull_requests: List[dict], team_key: str = None) -> None:
+        """Insert or update PRs from GraphQL (which don't have real GitHub IDs)"""
+        logger.info(f"Upserting {len(pull_requests)} PRs with team_key: {team_key}")
+        for pr_data in pull_requests:
+            # Use repository + number as key since GraphQL doesn't provide real IDs
+            repo_name = pr_data['repository']['full_name']
+            pr_number = pr_data['number']
+            
+            # Check if PR exists by repo + number
+            result = await self.db.execute(
+                select(DBPullRequest).where(
+                    DBPullRequest.repository_name == repo_name,
+                    DBPullRequest.number == pr_number
+                )
+            )
+            db_pr = result.scalar_one_or_none()
+            
+            if db_pr:
+                # Update existing PR (keep original github_id if it exists)
+                for key, value in pr_data.items():
+                    if key == 'id':
+                        continue  # Skip placeholder ID
+                    elif key == 'repository':
+                        db_pr.repository_name = value['full_name']
+                    elif key == 'user':
+                        db_pr.author_login = value['login']
+                        db_pr.author_avatar_url = value.get('avatar_url')
+                    elif key == 'created_at':
+                        if isinstance(value, str):
+                            db_pr.github_created_at = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        else:
+                            db_pr.github_created_at = value
+                    elif key == 'updated_at':
+                        if isinstance(value, str):
+                            db_pr.github_updated_at = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        else:
+                            db_pr.github_updated_at = value
+                    elif hasattr(db_pr, key):
+                        setattr(db_pr, key, value)
+                
+                # Update team associations if provided
+                if team_key:
+                    existing_teams = set(db_pr.associated_teams.split(',') if db_pr.associated_teams else [])
+                    existing_teams.add(team_key)
+                    db_pr.associated_teams = ','.join(existing_teams)
+                    logger.debug(f"Updated PR {repo_name}#{pr_number} team associations: {db_pr.associated_teams}")
+                
+                # Update JSON data
+                pr_data_serializable = self._convert_datetimes_to_strings(pr_data)
+                db_pr.pr_data = json.dumps(pr_data_serializable)
+            else:
+                # Create new PR with a unique fake GitHub ID for GraphQL PRs
+                # Use a negative number based on hash of repo+number to avoid conflicts
+                fake_github_id = -abs(hash(f"{repo_name}#{pr_number}")) % (2**31)
+                
+                db_pr = DBPullRequest(
+                    github_id=fake_github_id,  # Unique fake ID for GraphQL PRs
+                    number=pr_data['number'],
+                    repository_name=pr_data['repository']['full_name'],
+                    title=pr_data['title'],
+                    body=pr_data.get('body', ''),
+                    state=pr_data['state'],
+                    html_url=pr_data['html_url'],
+                    author_login=pr_data['user']['login'],
+                    author_avatar_url=pr_data['user'].get('avatar_url'),
+                    github_created_at=datetime.fromisoformat(pr_data['created_at'].replace('Z', '+00:00')) if isinstance(pr_data['created_at'], str) else pr_data['created_at'],
+                    github_updated_at=datetime.fromisoformat(pr_data['updated_at'].replace('Z', '+00:00')) if isinstance(pr_data['updated_at'], str) else pr_data['updated_at'],
+                    pr_data=json.dumps(self._convert_datetimes_to_strings(pr_data)),
+                    associated_teams=team_key if team_key else None
+                )
+                logger.debug(f"Creating PR {repo_name}#{pr_number} with team associations: {team_key}")
+                self.db.add(db_pr)
+        
+        await self.db.commit()
+
     async def upsert_pull_requests(self, pull_requests: List[dict], repository_name: str = None) -> None:
         """Insert or update multiple pull requests and remove ones no longer open"""
         # Get list of GitHub IDs that came back from API
@@ -447,19 +577,13 @@ class DatabaseService:
             from sqlalchemy import or_
             combined_condition = or_(*conditions)
             
-            # Filter for user-relevant PRs: assigned, review requested, or needs review
-            user_relevant_condition = or_(
-                DBPullRequest.user_is_assigned == True,
-                DBPullRequest.user_is_requested_reviewer == True,
-                # Note: status filtering for needs_review will be done in application logic
-                # since user_has_reviewed isn't stored in the database consistently
-            )
+            # Don't filter by user relevance in SQL - let the application layer handle it
+            # This is because GraphQL PRs don't have accurate user_is_assigned/user_is_requested_reviewer values
             
             result = await self.db.execute(
                 select(DBPullRequest).where(
                     combined_condition,
-                    DBPullRequest.state == 'open',
-                    user_relevant_condition
+                    DBPullRequest.state == 'open'
                 ).order_by(DBPullRequest.github_updated_at.desc())
             )
             db_prs = result.scalars().all()

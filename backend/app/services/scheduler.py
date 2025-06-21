@@ -7,6 +7,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.services.github_service import GitHubService
+from app.services.github_graphql_service_v2 import GitHubGraphQLServiceV2
 from app.services.websocket_manager import websocket_manager
 from app.services.database_service import DatabaseService
 from app.services.token_service import token_service
@@ -27,6 +28,9 @@ class PRMonitorScheduler:
         self.team_pr_cache_timestamp: Dict[str, datetime] = {}  # Track when team cache was last updated
         self.last_notification_time: Dict[str, datetime] = {}
         self.is_running = False
+        
+        # Register callback for when token is set
+        token_service.add_token_set_callback(self._on_token_set)
     
     async def start(self):
         """Start the scheduler (requires valid token)"""
@@ -35,15 +39,18 @@ class PRMonitorScheduler:
             return False
             
         if not self.is_running:
+            # Use GraphQL API if enabled for better performance
+            poll_method = self.poll_repositories_graphql if settings.USE_GRAPHQL_API else self.poll_repositories
             self.scheduler.add_job(
-                self.poll_repositories,
+                poll_method,
                 IntervalTrigger(seconds=settings.POLLING_INTERVAL_SECONDS),
                 id="poll_repositories",
                 replace_existing=True
             )
             self.scheduler.start()
             self.is_running = True
-            logger.info("PR Monitor scheduler started")
+            api_mode = "GraphQL (efficient)" if settings.USE_GRAPHQL_API else "REST (standard)"
+            logger.info(f"PR Monitor scheduler started using {api_mode} API")
             
             # Load existing subscriptions from database
             await self._load_existing_subscriptions()
@@ -97,6 +104,80 @@ class PRMonitorScheduler:
     
     def get_subscribed_teams(self) -> List[str]:
         return list(self.subscribed_teams.keys())
+    
+    async def poll_repositories_graphql(self):
+        """Poll all repositories and teams using efficient GraphQL API (1 API call per org)"""
+        if not self.subscribed_repositories and not self.subscribed_teams:
+            return
+            
+        logger.info(f"GraphQL polling {len(self.subscribed_repositories)} repositories and {len(self.subscribed_teams)} teams")
+        
+        graphql_service = GitHubGraphQLServiceV2()
+        try:
+            # Process only subscribed teams
+            for team_key, subscription in self.subscribed_teams.items():
+                if not subscription.enabled:
+                    continue
+                
+                try:
+                    org, team_slug = team_key.split('/', 1)
+                    logger.info(f"Fetching PRs for team {team_key} with GraphQL...")
+                    prs = await graphql_service.get_team_pull_requests(org, team_slug)
+                    
+                    # Update cache and handle changes
+                    previous_prs = self.team_pr_cache.get(team_key, {})
+                    
+                    new_prs = []
+                    updated_prs = []
+                    closed_prs = []
+                    
+                    current_pr_numbers = {pr.number for pr in prs}
+                    previous_pr_numbers = set(previous_prs.keys())
+                    
+                    for pr in prs:
+                        if pr.number not in previous_prs:
+                            new_prs.append(pr)
+                        elif pr.updated_at != previous_prs[pr.number].updated_at:
+                            updated_prs.append(pr)
+                    
+                    for pr_number in previous_pr_numbers - current_pr_numbers:
+                        closed_prs.append(previous_prs[pr_number])
+                    
+                    # Update cache
+                    self.team_pr_cache[team_key] = {pr.number: pr for pr in prs}
+                    self.team_pr_cache_timestamp[team_key] = datetime.now(timezone.utc)
+                    
+                    # Save PRs to database using GraphQL-specific method
+                    async for db in get_db():
+                        db_service = DatabaseService(db)
+                        pr_dicts = [pr.dict() for pr in prs]
+                        await db_service.upsert_pull_requests_graphql(pr_dicts, team_key)
+                        logger.info(f"Saved {len(pr_dicts)} PRs to database for team {team_key}")
+                        break
+                    
+                    # Send notifications and updates
+                    await self._handle_team_pr_changes(
+                        team_key, subscription, 
+                        new_prs, updated_prs, closed_prs
+                    )
+                    
+                    await self._send_team_stats_update(org, team_slug, prs)
+                            
+                except Exception as e:
+                    logger.error(f"Error fetching PRs for team {team_key}: {e}")
+            
+            # Still poll individual repositories using REST API
+            github_service = GitHubService()
+            for repo_name, subscription in self.subscribed_repositories.items():
+                if not subscription.enabled:
+                    continue
+                try:
+                    await self._poll_repository(github_service, repo_name, subscription)
+                except Exception as e:
+                    logger.error(f"Error polling repository {repo_name}: {e}")
+                    
+        finally:
+            await graphql_service.close()
     
     async def poll_repositories(self):
         # Check if we have a valid token before polling
@@ -651,6 +732,34 @@ class PRMonitorScheduler:
                     
         except Exception as e:
             logger.error(f"Error auto-subscribing to user teams: {e}")
+    
+    async def _on_token_set(self):
+        """Callback when token is successfully set - start scheduler and trigger immediate poll"""
+        try:
+            logger.info("Token set callback triggered - starting scheduler and polling immediately")
+            
+            # Start the scheduler if not already running
+            await self.start()
+            
+            # Trigger an immediate poll
+            await self._trigger_immediate_poll()
+            
+        except Exception as e:
+            logger.error(f"Error in token set callback: {e}")
+    
+    async def _trigger_immediate_poll(self):
+        """Trigger an immediate poll without waiting for the scheduler interval"""
+        try:
+            logger.info("Triggering immediate poll after token is set")
+            
+            # Use the appropriate poll method based on settings
+            if settings.USE_GRAPHQL_API:
+                await self.poll_repositories_graphql()
+            else:
+                await self.poll_repositories()
+                
+        except Exception as e:
+            logger.error(f"Error during immediate poll: {e}")
 
 
 scheduler = PRMonitorScheduler()

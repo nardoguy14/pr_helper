@@ -158,7 +158,10 @@ async def clear_github_token():
 
 
 @router.post("/repositories/subscribe", response_model=SubscribeRepositoryResponse)
-async def subscribe_to_repository(request: SubscribeRepositoryRequest):
+async def subscribe_to_repository(
+    request: SubscribeRepositoryRequest,
+    db: AsyncSession = Depends(get_db)
+):
     try:
         async with GitHubService() as github_service:
             repository = await github_service.get_repository(request.repository_name)
@@ -177,15 +180,25 @@ async def subscribe_to_repository(request: SubscribeRepositoryRequest):
                 teams=request.teams
             )
             
+            # Save to database first
+            db_service = DatabaseService(db)
+            existing = await db_service.get_repository_subscription(request.repository_name)
+            if existing:
+                # Delete existing and create new (update)
+                await db_service.delete_repository_subscription(request.repository_name)
+            
+            saved_subscription = await db_service.create_repository_subscription(subscription)
+            
+            # Then add to scheduler
             scheduler = get_scheduler()
-            scheduler.add_repository_subscription(subscription)
+            scheduler.add_repository_subscription(saved_subscription)
             
             await scheduler.force_refresh_repository(request.repository_name)
             
             return SubscribeRepositoryResponse(
                 success=True,
                 message=f"Successfully subscribed to repository '{request.repository_name}'",
-                subscription=subscription
+                subscription=saved_subscription
             )
     
     except HTTPException:
@@ -196,7 +209,10 @@ async def subscribe_to_repository(request: SubscribeRepositoryRequest):
 
 
 @router.post("/repositories/unsubscribe", response_model=UnsubscribeRepositoryResponse)
-async def unsubscribe_from_repository(request: UnsubscribeRepositoryRequest):
+async def unsubscribe_from_repository(
+    request: UnsubscribeRepositoryRequest,
+    db: AsyncSession = Depends(get_db)
+):
     try:
         scheduler = get_scheduler()
         subscribed_repos = scheduler.get_subscribed_repositories()
@@ -207,7 +223,12 @@ async def unsubscribe_from_repository(request: UnsubscribeRepositoryRequest):
                 detail=f"Not subscribed to repository '{request.repository_name}'"
             )
         
+        # Remove from scheduler
         scheduler.remove_repository_subscription(request.repository_name)
+        
+        # Remove from database
+        db_service = DatabaseService(db)
+        await db_service.delete_repository_subscription(request.repository_name)
         
         return UnsubscribeRepositoryResponse(
             success=True,
@@ -222,42 +243,32 @@ async def unsubscribe_from_repository(request: UnsubscribeRepositoryRequest):
 
 
 @router.get("/repositories", response_model=GetRepositoriesResponse)
-async def get_subscribed_repositories():
+async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
     try:
-        scheduler = get_scheduler()
-        subscribed_repos = scheduler.get_subscribed_repositories()
+        # Get repository stats from database (updated by scheduler)
+        db_service = DatabaseService(db)
+        repository_stats = await db_service.get_all_repository_stats()
         
+        # For each stat, we need to get the repository details
+        # This is less efficient but maintains the current API response structure
         repositories = []
-        async with GitHubService() as github_service:
-            for repo_name in subscribed_repos:
-                repository = await github_service.get_repository(repo_name)
-                if repository:
-                    prs = await github_service.get_pull_requests(repo_name)
-                    
-                    current_user = await github_service.get_current_user()
-                    assigned_count = 0
-                    review_requests = 0
-                    
-                    if current_user:
-                        assigned_count = len([
-                            pr for pr in prs 
-                            if any(assignee.id == current_user.id for assignee in pr.assignees)
-                        ])
-                        review_requests = len([
-                            pr for pr in prs 
-                            if any(reviewer.id == current_user.id for reviewer in pr.requested_reviewers)
-                        ])
-                    
-                    stats = RepositoryStats(
-                        repository_name=repo_name,
-                        repository=repository,
-                        total_open_prs=len(prs),
-                        assigned_to_user=assigned_count,
-                        review_requests=review_requests,
-                        code_owner_prs=0,  # TODO: Implement code owner detection
-                        last_updated=datetime.utcnow()
-                    )
-                    repositories.append(stats)
+        if repository_stats:
+            async with GitHubService() as github_service:
+                for stat in repository_stats:
+                    # Get repository details
+                    repository = await github_service.get_repository(stat.repository_name)
+                    if repository:
+                        # Create RepositoryStats with both stats and repository info
+                        repo_stats = RepositoryStats(
+                            repository_name=stat.repository_name,
+                            repository=repository,
+                            total_open_prs=stat.total_open_prs,
+                            assigned_to_user=stat.assigned_to_user,
+                            review_requests=stat.review_requests,
+                            code_owner_prs=stat.code_owner_prs,
+                            last_updated=stat.last_updated
+                        )
+                        repositories.append(repo_stats)
         
         return GetRepositoriesResponse(
             repositories=repositories,

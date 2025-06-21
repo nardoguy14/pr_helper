@@ -20,6 +20,7 @@ class TokenService:
         self._user_info: Optional[Dict[str, Any]] = None
         self._last_validated: Optional[datetime] = None
         self._validation_lock = asyncio.Lock()
+        self._token_set_callbacks = []
     
     @property
     def token(self) -> Optional[str]:
@@ -60,6 +61,13 @@ class TokenService:
             if is_valid:
                 self._token_valid = True
                 logger.info(f"GitHub token validated successfully for user: {self._user_info.get('login', 'Unknown')}")
+                
+                # Notify callbacks that token is set
+                for callback in self._token_set_callbacks:
+                    try:
+                        await callback()
+                    except Exception as e:
+                        logger.error(f"Error calling token set callback: {e}")
             else:
                 self._token_valid = False
                 self._user_info = None
@@ -159,6 +167,10 @@ class TokenService:
             'Accept': 'application/vnd.github.v3+json',
             'User-Agent': 'PR-Monitor-App'
         }
+    
+    def add_token_set_callback(self, callback):
+        """Add a callback to be called when token is successfully set"""
+        self._token_set_callbacks.append(callback)
 
 
 # Global token service instance
