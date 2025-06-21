@@ -39,18 +39,16 @@ class PRMonitorScheduler:
             return False
             
         if not self.is_running:
-            # Use GraphQL API if enabled for better performance
-            poll_method = self.poll_repositories_graphql if settings.USE_GRAPHQL_API else self.poll_repositories
+            # Always use GraphQL API for better performance
             self.scheduler.add_job(
-                poll_method,
+                self.poll_repositories_graphql,
                 IntervalTrigger(seconds=settings.POLLING_INTERVAL_SECONDS),
                 id="poll_repositories",
                 replace_existing=True
             )
             self.scheduler.start()
             self.is_running = True
-            api_mode = "GraphQL (efficient)" if settings.USE_GRAPHQL_API else "REST (standard)"
-            logger.info(f"PR Monitor scheduler started using {api_mode} API")
+            logger.info("PR Monitor scheduler started using GraphQL API")
             
             # Load existing subscriptions from database
             await self._load_existing_subscriptions()
@@ -155,6 +153,9 @@ class PRMonitorScheduler:
                         logger.info(f"Saved {len(pr_dicts)} PRs to database for team {team_key}")
                         break
                     
+                    # Log discovered repositories from team PRs (no subscriptions created)
+                    await self._log_discovered_repositories_from_prs(prs)
+                    
                     # Send notifications and updates
                     await self._handle_team_pr_changes(
                         team_key, subscription, 
@@ -169,8 +170,7 @@ class PRMonitorScheduler:
             # Still poll individual repositories using REST API
             github_service = GitHubService()
             for repo_name, subscription in self.subscribed_repositories.items():
-                if not subscription.enabled:
-                    continue
+                # Repository subscriptions don't have enabled field - they're always active
                 try:
                     await self._poll_repository(github_service, repo_name, subscription)
                 except Exception as e:
@@ -178,45 +178,6 @@ class PRMonitorScheduler:
                     
         finally:
             await graphql_service.close()
-    
-    async def poll_repositories(self):
-        # Check if we have a valid token before polling
-        if not token_service.is_token_valid:
-            logger.warning("Skipping poll: No valid GitHub token available")
-            return
-            
-        has_repos = bool(self.subscribed_repositories)
-        has_teams = bool(self.subscribed_teams)
-        
-        if not has_repos and not has_teams:
-            return
-        
-        logger.info(f"Polling {len(self.subscribed_repositories)} repositories and {len(self.subscribed_teams)} teams for PR updates")
-        
-        async with GitHubService() as github_service:
-            # PHASE 1: Data Collection - Poll all sources and collect PR data
-            
-            # Poll repositories (existing logic unchanged)
-            for repo_name, subscription in self.subscribed_repositories.items():
-                try:
-                    await self._poll_repository(github_service, repo_name, subscription)
-                except Exception as e:
-                    logger.error(f"Error polling repository {repo_name}: {e}")
-            
-            # Poll teams (only enabled ones) - collect data without updating associations
-            all_team_prs = {}  # team_key -> list of PRs
-            for team_key, subscription in self.subscribed_teams.items():
-                if not subscription.enabled:
-                    continue
-                try:
-                    team_prs = await self._collect_team_prs(github_service, team_key, subscription)
-                    if team_prs:
-                        all_team_prs[team_key] = team_prs
-                except Exception as e:
-                    logger.error(f"Error polling team {team_key}: {e}")
-            
-            # PHASE 2: Association Updates - Update all team associations at once
-            await self._update_all_team_associations(all_team_prs)
     
     async def _poll_repository(
         self, 
@@ -752,14 +713,27 @@ class PRMonitorScheduler:
         try:
             logger.info("Triggering immediate poll after token is set")
             
-            # Use the appropriate poll method based on settings
-            if settings.USE_GRAPHQL_API:
-                await self.poll_repositories_graphql()
-            else:
-                await self.poll_repositories()
+            # Always use GraphQL API
+            await self.poll_repositories_graphql()
                 
         except Exception as e:
             logger.error(f"Error during immediate poll: {e}")
+
+    async def _log_discovered_repositories_from_prs(self, prs):
+        """Log discovered repositories from team PRs without creating subscriptions"""
+        discovered_repos = set()
+        
+        # Extract unique repository names from PRs
+        for pr in prs:
+            if hasattr(pr, 'repository') and pr.repository:
+                repo_full_name = pr.repository.full_name
+                discovered_repos.add(repo_full_name)
+        
+        if discovered_repos:
+            logger.info(f"Found {len(discovered_repos)} repositories in team PRs: {list(discovered_repos)}")
+        
+        # Note: Repository nodes will be created dynamically in the frontend
+        # based on team PR data, without creating actual repository subscriptions
 
 
 scheduler = PRMonitorScheduler()

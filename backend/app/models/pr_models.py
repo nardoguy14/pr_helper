@@ -90,7 +90,8 @@ class WebSocketMessage(BaseModel):
 
 
 class RepositoryStats(BaseModel):
-    repository: Repository
+    repository_name: str
+    repository: Optional[Repository] = None
     total_open_prs: int
     assigned_to_user: int
     review_requests: int

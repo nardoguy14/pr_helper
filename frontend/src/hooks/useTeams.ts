@@ -15,12 +15,18 @@ interface UseTeamsReturn {
   disableTeam: (organization: string, teamName: string) => Promise<void>;
 }
 
-export function useTeams(): UseTeamsReturn {
+export function useTeams(isAuthenticated: boolean): UseTeamsReturn {
   const [teams, setTeams] = useState<TeamStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchTeams = useCallback(async () => {
+    // Only fetch if authenticated
+    if (!isAuthenticated) {
+      setTeams([]);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -32,7 +38,7 @@ export function useTeams(): UseTeamsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const subscribeToTeam = useCallback(async (request: TeamSubscriptionRequest) => {
     try {
@@ -136,7 +142,7 @@ export function useTeams(): UseTeamsReturn {
 
   useEffect(() => {
     fetchTeams();
-  }, [fetchTeams]);
+  }, [fetchTeams, isAuthenticated]);
 
   return {
     teams,

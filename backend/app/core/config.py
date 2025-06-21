@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     GITHUB_API_BASE_URL: str = "https://api.github.com"
     POLLING_INTERVAL_SECONDS: int = 60
     AUTO_SUBSCRIBE_USER_TEAMS: bool = True
-    USE_GRAPHQL_API: bool = False
     
     ALLOWED_ORIGINS: List[str] = ["*"]
     
@@ -32,8 +31,6 @@ class Settings(BaseSettings):
     
     LOG_LEVEL: str = "INFO"
     
-    class Config:
-        env_file = ".env"
 
 
 settings = Settings()

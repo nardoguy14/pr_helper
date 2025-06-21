@@ -147,6 +147,16 @@ class ApiService {
     );
   }
 
+  // Get team-discovered repositories for dynamic node creation
+  async getTeamRepositories(): Promise<{
+    repositories: any[];
+    total_count: number;
+  }> {
+    return this.handleRequest(
+      axios.get(this.getUrl('/teams/repositories'))
+    );
+  }
+
   // Health check
   async healthCheck(): Promise<{ status: string }> {
     return this.handleRequest(

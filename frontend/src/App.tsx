@@ -13,6 +13,7 @@ import { TokenSetup } from './components/auth/TokenSetup';
 
 import { useWebSocket } from './hooks/useWebSocket';
 import { useRepositories } from './hooks/useRepositories';
+import { useTeamRepositories } from './hooks/useTeamRepositories';
 import { useTeams } from './hooks/useTeams';
 import { usePullRequests } from './hooks/usePullRequests';
 import { useAuth } from './hooks/useAuth';
@@ -373,7 +374,7 @@ function App() {
   const [expandedRepositoryNodes, setExpandedRepositoryNodes] = useState<Set<string>>(new Set());
   const [allTeamPullRequests, setAllTeamPullRequests] = useState<Record<string, any[]>>({});
   const [teamRepositories, setTeamRepositories] = useState<Record<string, string[]>>({});
-  const [fetchingTeams, setFetchingTeams] = useState<Set<string>>(new Set());
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   // Initialize with last week
   const getDefaultDateRange = () => {
     const endDate = new Date();
@@ -449,7 +450,7 @@ function App() {
     }
   }, []);
 
-  // Hooks
+  // Hooks - Pass isAuthenticated to enable data fetching after auth
   const {
     repositories,
     loading: reposLoading,
@@ -458,7 +459,15 @@ function App() {
     unsubscribeFromRepository,
     refreshRepository,
     updateRepositoryStats
-  } = useRepositories();
+  } = useRepositories(isAuthenticated);
+
+  // Hook for team-discovered repositories (dynamic nodes)
+  const {
+    teamRepositories: discoveredTeamRepositories,
+    loading: teamRepositoriesLoading,
+    error: teamRepositoriesError,
+    refreshTeamRepositories
+  } = useTeamRepositories(isAuthenticated);
 
   const {
     teams,
@@ -470,7 +479,7 @@ function App() {
     updateTeamStats,
     enableTeam,
     disableTeam
-  } = useTeams();
+  } = useTeams(isAuthenticated);
 
   const {
     allPullRequests,
@@ -486,7 +495,7 @@ function App() {
     addPullRequest,
     clearAllPullRequests,
     getPullRequestsForRepository
-  } = usePullRequests();
+  } = usePullRequests(isAuthenticated);
 
   const { isConnected, error: wsError } = useWebSocket(
     // Handle PR updates
@@ -515,8 +524,62 @@ function App() {
     useCallback((data: any) => {
       const { repository, stats } = data;
       updateRepositoryStats(repository, stats);
-    }, [updateRepositoryStats])
+    }, [updateRepositoryStats]),
+    isAuthenticated
   );
+
+  // Track when initial data is loaded after authentication
+  useEffect(() => {
+    if (isAuthenticated && !initialDataLoaded) {
+      // Mark as loaded when we have either repos or teams data, or both finished loading
+      if ((!reposLoading && !teamsLoading) && (repositories.length > 0 || teams.length > 0)) {
+        setInitialDataLoaded(true);
+      }
+    }
+  }, [isAuthenticated, initialDataLoaded, reposLoading, teamsLoading, repositories.length, teams.length]);
+
+  // Reset initial data loaded state when user logs out
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setInitialDataLoaded(false);
+    }
+  }, [isAuthenticated]);
+
+  // Debug the hook data
+  useEffect(() => {
+    console.log('=== HOOK DEBUG ===');
+    console.log('isAuthenticated:', isAuthenticated);
+    console.log('discoveredTeamRepositories:', discoveredTeamRepositories);
+    console.log('teamRepositoriesLoading:', teamRepositoriesLoading);
+    console.log('teamRepositoriesError:', teamRepositoriesError);
+    console.log('=== END HOOK DEBUG ===');
+  }, [isAuthenticated, discoveredTeamRepositories, teamRepositoriesLoading, teamRepositoriesError]);
+
+  // Transform team repositories data from the new hook into the expected format
+  useEffect(() => {
+    console.log('Transform useEffect triggered, discoveredTeamRepositories:', discoveredTeamRepositories?.length || 0);
+    
+    if (discoveredTeamRepositories && discoveredTeamRepositories.length > 0) {
+      const transformedTeamRepos: Record<string, string[]> = {};
+      
+      // Group repositories by the teams they come from
+      discoveredTeamRepositories.forEach(teamRepo => {
+        teamRepo.from_teams.forEach(teamKey => {
+          if (!transformedTeamRepos[teamKey]) {
+            transformedTeamRepos[teamKey] = [];
+          }
+          if (!transformedTeamRepos[teamKey].includes(teamRepo.repository_name)) {
+            transformedTeamRepos[teamKey].push(teamRepo.repository_name);
+          }
+        });
+      });
+      
+      console.log('Setting transformed team repositories:', transformedTeamRepos);
+      setTeamRepositories(transformedTeamRepos);
+    } else {
+      console.log('No discovered team repositories to transform');
+    }
+  }, [discoveredTeamRepositories]);
 
   // Preload PR data for all repositories when they change
   useEffect(() => {
@@ -623,21 +686,17 @@ function App() {
     }
   }, [showNotifications]);
 
-  // Auto-fetch team PRs when teams load to get accurate counts
+  // Fetch team PRs to populate allTeamPullRequests when teams are available
   useEffect(() => {
-    if (teams.length === 0) return;
+    if (teams.length === 0 || !isAuthenticated) return;
     
-    // Fetch PRs for all teams to get accurate filtered counts
     teams.forEach(team => {
       const teamKey = `${team.organization}/${team.team_name}`;
       
-      // Skip if already fetching or already have data
-      if (fetchingTeams.has(teamKey) || allTeamPullRequests[teamKey]) return;
+      // Skip if already have data for this team
+      if (allTeamPullRequests[teamKey]) return;
       
-      console.log('Auto-fetching PRs for team:', teamKey);
-      
-      // Mark as fetching
-      setFetchingTeams(prev => new Set(prev).add(teamKey));
+      console.log('Fetching PRs for team:', teamKey);
       
       fetch(`http://localhost:8000/api/v1/teams/${team.organization}/${team.team_name}/pull-requests`)
         .then(response => {
@@ -647,35 +706,18 @@ function App() {
           return response.json();
         })
         .then(data => {
-          console.log('Auto-fetched PRs for team:', teamKey, data.pull_requests?.length || 0);
+          console.log('Fetched PRs for team:', teamKey, data.pull_requests?.length || 0);
           
-          // Store the PRs
           setAllTeamPullRequests(prev => ({
             ...prev,
             [teamKey]: data.pull_requests || []
           }));
-          
-          // Extract and store repository names
-          const repoNames = Array.from(new Set(data.pull_requests?.map((pr: any) => pr.repository.full_name) || [])) as string[];
-          if (repoNames.length > 0) {
-            setTeamRepositories(prev => ({
-              ...prev,
-              [teamKey]: repoNames
-            }));
-          }
         })
         .catch(error => {
-          console.error('Failed to auto-fetch team PRs:', error);
-        })
-        .finally(() => {
-          setFetchingTeams(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(teamKey);
-            return newSet;
-          });
+          console.error('Failed to fetch team PRs:', error);
         });
     });
-  }, [teams]); // Only trigger when teams load
+  }, [teams, isAuthenticated, allTeamPullRequests]);
 
   const handleAddRepository = async (request: SubscribeRepositoryRequest) => {
     try {
@@ -765,122 +807,19 @@ function App() {
     console.log('handleTeamClick called:', organization, teamName);
     const teamKey = `${organization}/${teamName}`;
     
-    // Use a ref or state update to determine if we should expand or collapse
-    let wasExpanded = false;
+    // Simple toggle expansion logic - let the hook handle data fetching
     setExpandedTeams(prev => {
-      console.log('Current expandedTeams (from setter):', Array.from(prev));
-      console.log('Checking if expanded:', teamKey);
-      wasExpanded = prev.has(teamKey);
-      console.log('wasExpanded:', wasExpanded);
-      
-      if (wasExpanded) {
-        // If expanded, collapse it
+      const newSet = new Set(prev);
+      if (prev.has(teamKey)) {
         console.log('Collapsing team:', teamKey);
-        const newSet = new Set(prev);
         newSet.delete(teamKey);
-        return newSet;
       } else {
-        // Don't change yet - we'll expand after fetching data
-        return prev;
+        console.log('Expanding team:', teamKey);
+        newSet.add(teamKey);
       }
+      return newSet;
     });
-    
-    // If it was expanded, we already collapsed it above, so return
-    if (wasExpanded) {
-      console.log('Team was collapsed, returning');
-      return;
-    }
-    
-    // Otherwise, expand the team
-    console.log('Expanding team:', teamKey);
-    
-    // Fetch team repositories if we don't have them and not already fetching
-    if (!teamRepositories[teamKey] && !fetchingTeams.has(teamKey)) {
-        console.log('Fetching repositories for team:', teamKey);
-        console.log('Making API call to GitHub...');
-        
-        // Mark as fetching to prevent concurrent requests
-        setFetchingTeams(prev => new Set(prev).add(teamKey));
-        
-        try {
-          const response = await fetch(`http://localhost:8000/api/v1/teams/${organization}/${teamName}/pull-requests`);
-          
-          // Check if we're rate limited
-          if (response.status === 403 || response.status === 429) {
-            console.error('GitHub API rate limit exceeded');
-            alert('GitHub API rate limit exceeded. Please wait a few minutes and try again.');
-            return;
-          }
-          
-          if (!response.ok) {
-            throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-          }
-          
-          const data = await response.json();
-          console.log('Team PRs fetched:', data.pull_requests?.length || 0, 'PRs');
-          console.log('Raw API response:', data);
-          
-          // Extract unique repository names from the PRs
-          let repoNames = Array.from(new Set(data.pull_requests?.map((pr: any) => pr.repository.full_name) || [])) as string[];
-          console.log('Team repositories:', repoNames, 'from', data.pull_requests?.length || 0, 'PRs');
-          
-          
-          // Store the repositories - but don't overwrite with empty data
-          if (repoNames.length > 0) {
-            setTeamRepositories(prev => {
-              // Double-check we're not overwriting good data
-              if (prev[teamKey] && prev[teamKey].length > 0 && repoNames.length === 0) {
-                console.warn('Preventing overwrite of existing team data with empty data');
-                return prev;
-              }
-              
-              const newState: Record<string, string[]> = {
-                ...prev,
-                [teamKey]: repoNames
-              };
-              return newState;
-            });
-            
-            // Also store the PRs for later use
-            setAllTeamPullRequests(prev => ({
-              ...prev,
-              [teamKey]: data.pull_requests || []
-            }));
-          } else {
-            console.warn('Received empty repository list for team', teamKey);
-          }
-          
-          // Then expand the team
-          setExpandedTeams(prev => {
-            const newSet = new Set(prev);
-            newSet.add(teamKey);
-            console.log('Team expanded with repositories:', Array.from(newSet));
-            return newSet;
-          });
-          
-        } catch (error) {
-          console.error('Failed to fetch team pull requests:', error);
-        } finally {
-          // Remove from fetching set
-          setFetchingTeams(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(teamKey);
-            return newSet;
-          });
-        }
-      } else if (fetchingTeams.has(teamKey)) {
-        console.log('Already fetching team:', teamKey, '- skipping duplicate request');
-      } else {
-        console.log('Team repositories already cached:', teamRepositories[teamKey]?.length || 0, 'repos');
-        console.log('NOT making API call - using cached data');
-        // Repositories already exist, just expand
-        setExpandedTeams(prev => {
-          const newSet = new Set(prev);
-          newSet.add(teamKey);
-          return newSet;
-        });
-      }
-  }, [teamRepositories, fetchingTeams, teams, allTeamPullRequests]); // Removed expandedTeams to avoid stale closure
+  }, []);
 
   const handleBackToMindMap = () => {
     clearAllPullRequests();
@@ -1054,6 +993,21 @@ function App() {
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '18px', marginBottom: '8px' }}>Loading...</div>
             <div style={{ color: '#586069' }}>Checking authentication status</div>
+          </div>
+        </AppContainer>
+      </>
+    );
+  }
+
+  // Show loading screen while fetching initial data after authentication
+  if (isAuthenticated && !initialDataLoaded && (reposLoading || teamsLoading)) {
+    return (
+      <>
+        <GlobalStyle />
+        <AppContainer style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '18px', marginBottom: '8px' }}>Loading your data...</div>
+            <div style={{ color: '#586069' }}>Fetching repositories and teams</div>
           </div>
         </AppContainer>
       </>

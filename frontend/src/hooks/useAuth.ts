@@ -29,7 +29,7 @@ export const useAuth = () => {
     rateLimited: false,
   });
 
-  const checkAuthStatus = async () => {
+  const checkAuthStatus = async (retries = 5) => {
     try {
       console.log('useAuth: Checking authentication status...');
       setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -64,6 +64,14 @@ export const useAuth = () => {
       }
     } catch (error) {
       console.error('useAuth: Exception during auth status check:', error);
+      
+      // If backend isn't ready yet, retry after a delay
+      if (retries > 0 && error instanceof Error && error.message.includes('Failed to fetch')) {
+        console.log(`useAuth: Backend not ready, retrying in 2 seconds... (${retries} retries left)`);
+        setTimeout(() => checkAuthStatus(retries - 1), 2000);
+        return;
+      }
+      
       setAuthState({
         isAuthenticated: false,
         user: null,

@@ -19,7 +19,7 @@ interface UsePullRequestsReturn {
   getPullRequestsForRepository: (repositoryName: string) => PullRequest[];
 }
 
-export function usePullRequests(): UsePullRequestsReturn {
+export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn {
   const [allPullRequests, setAllPullRequests] = useState<Record<string, PullRequest[]>>({});
   const [userRelevantPRs, setUserRelevantPRs] = useState<PullRequest[]>([]);
   const [expandedRepositories, setExpandedRepositories] = useState<Set<string>>(new Set());
@@ -27,6 +27,11 @@ export function usePullRequests(): UsePullRequestsReturn {
   const [error, setError] = useState<string | null>(null);
 
   const fetchPullRequestsForRepository = useCallback(async (repositoryName: string) => {
+    // Only fetch if authenticated
+    if (!isAuthenticated) {
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -42,10 +47,13 @@ export function usePullRequests(): UsePullRequestsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const fetchPullRequestsForAllRepositories = useCallback(async (repositoryNames: string[]) => {
-    if (repositoryNames.length === 0) return;
+    // Only fetch if authenticated
+    if (!isAuthenticated || repositoryNames.length === 0) {
+      return;
+    }
     
     try {
       setLoading(true);
@@ -78,9 +86,15 @@ export function usePullRequests(): UsePullRequestsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const fetchUserRelevantPullRequests = useCallback(async () => {
+    // Only fetch if authenticated
+    if (!isAuthenticated) {
+      setUserRelevantPRs([]);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -93,7 +107,7 @@ export function usePullRequests(): UsePullRequestsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const toggleRepositoryExpansion = useCallback((repositoryName: string) => {
     setExpandedRepositories(prev => {

@@ -10,12 +10,18 @@ interface UseWebSocketReturn {
 
 export function useWebSocket(
   onPRUpdate?: (data: any) => void,
-  onRepositoryStatsUpdate?: (data: any) => void
+  onRepositoryStatsUpdate?: (data: any) => void,
+  isAuthenticated: boolean = false
 ): UseWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const connect = useCallback(async () => {
+    // Only connect if authenticated
+    if (!isAuthenticated) {
+      return;
+    }
+
     try {
       setError(null);
       const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
@@ -23,7 +29,7 @@ export function useWebSocket(
     } catch (err: any) {
       setError(err.message || 'Failed to connect to WebSocket');
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const disconnect = useCallback(() => {
     websocketService.disconnect();
@@ -47,13 +53,18 @@ export function useWebSocket(
 
     websocketService.setEventHandlers(handlers);
 
-    // Auto-connect on mount
-    connect();
+    // Auto-connect when authenticated
+    if (isAuthenticated) {
+      connect();
+    } else {
+      // Disconnect if not authenticated
+      disconnect();
+    }
 
     return () => {
       disconnect();
     };
-  }, [connect, disconnect, onPRUpdate, onRepositoryStatsUpdate]);
+  }, [connect, disconnect, onPRUpdate, onRepositoryStatsUpdate, isAuthenticated]);
 
   return {
     isConnected,

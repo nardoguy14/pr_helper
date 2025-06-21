@@ -188,6 +188,14 @@ async def subscribe_to_repository(
                 await db_service.delete_repository_subscription(request.repository_name)
             
             saved_subscription = await db_service.create_repository_subscription(subscription)
+            logger.info(f"Successfully saved repository subscription to database: {saved_subscription.repository_name}")
+            
+            # Verify it was saved by reading it back
+            verification = await db_service.get_repository_subscription(request.repository_name)
+            if verification:
+                logger.info(f"Verified repository subscription exists in database: {verification.repository_name}")
+            else:
+                logger.error(f"Failed to verify repository subscription was saved: {request.repository_name}")
             
             # Then add to scheduler
             scheduler = get_scheduler()
@@ -248,6 +256,11 @@ async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
         # Get repository stats from database (updated by scheduler)
         db_service = DatabaseService(db)
         repository_stats = await db_service.get_all_repository_stats()
+        logger.info(f"Found {len(repository_stats) if repository_stats else 0} repository stats in database")
+        
+        # Also check repository subscriptions
+        repository_subscriptions = await db_service.get_all_repository_subscriptions()
+        logger.info(f"Found {len(repository_subscriptions) if repository_subscriptions else 0} repository subscriptions in database")
         
         # For each stat, we need to get the repository details
         # This is less efficient but maintains the current API response structure
@@ -255,13 +268,18 @@ async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
         if repository_stats:
             async with GitHubService() as github_service:
                 for stat in repository_stats:
-                    # Get repository details
-                    repository = await github_service.get_repository(stat.repository_name)
-                    if repository:
-                        # Create RepositoryStats with both stats and repository info
+                    try:
+                        # Get repository details
+                        repository = None
+                        try:
+                            repository = await github_service.get_repository(stat.repository_name)
+                        except Exception as repo_error:
+                            logger.warning(f"Could not fetch repository details for {stat.repository_name}: {repo_error}")
+                        
+                        # Create RepositoryStats even if repository details are unavailable
                         repo_stats = RepositoryStats(
                             repository_name=stat.repository_name,
-                            repository=repository,
+                            repository=repository,  # Will be None if fetch failed
                             total_open_prs=stat.total_open_prs,
                             assigned_to_user=stat.assigned_to_user,
                             review_requests=stat.review_requests,
@@ -269,6 +287,15 @@ async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
                             last_updated=stat.last_updated
                         )
                         repositories.append(repo_stats)
+                        
+                        if repository:
+                            logger.info(f"Successfully created RepositoryStats with repository details for {stat.repository_name}")
+                        else:
+                            logger.info(f"Created RepositoryStats without repository details for {stat.repository_name}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing repository stat for {stat.repository_name}: {e}")
+                        continue
         
         return GetRepositoriesResponse(
             repositories=repositories,
@@ -754,4 +781,72 @@ async def get_user_relevant_pull_requests():
     
     except Exception as e:
         logger.error(f"Error getting user relevant pull requests: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/teams/repositories")
+async def get_team_repositories():
+    """Get repository information discovered from team PRs for dynamic node creation"""
+    try:
+        scheduler = get_scheduler()
+        subscribed_teams = scheduler.get_subscribed_teams()
+        
+        if not subscribed_teams:
+            return {"repositories": [], "total_count": 0}
+        
+        # Collect repository information from all team PRs
+        repositories = {}
+        
+        async for db in get_db():
+            db_service = DatabaseService(db)
+            
+            for team_key in subscribed_teams:
+                try:
+                    # Get PRs for this team
+                    pr_dicts = await db_service.get_team_pull_requests(team_key)
+                    
+                    for pr_dict in pr_dicts:
+                        repo_name = pr_dict.get('repository', {}).get('full_name')
+                        if repo_name:
+                            if repo_name not in repositories:
+                                repositories[repo_name] = {
+                                    "repository_name": repo_name,
+                                    "repository": pr_dict.get('repository', {}),
+                                    "total_open_prs": 0,
+                                    "assigned_to_user": 0,
+                                    "review_requests": 0,
+                                    "from_teams": set(),
+                                    "prs": []
+                                }
+                            
+                            # Count PR stats
+                            repo_info = repositories[repo_name]
+                            repo_info["total_open_prs"] += 1
+                            repo_info["from_teams"].add(team_key)
+                            repo_info["prs"].append(pr_dict)
+                            
+                            if pr_dict.get('user_is_assigned'):
+                                repo_info["assigned_to_user"] += 1
+                            if pr_dict.get('user_is_requested_reviewer'):
+                                repo_info["review_requests"] += 1
+                
+                except Exception as e:
+                    logger.error(f"Error processing team {team_key} for repository discovery: {e}")
+                    continue
+            
+            break
+        
+        # Convert sets to lists for JSON serialization
+        for repo_info in repositories.values():
+            repo_info["from_teams"] = list(repo_info["from_teams"])
+        
+        logger.info(f"Found {len(repositories)} repositories from {len(subscribed_teams)} teams")
+        
+        return {
+            "repositories": list(repositories.values()),
+            "total_count": len(repositories)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting team repositories: {e}")
         raise HTTPException(status_code=500, detail=str(e))

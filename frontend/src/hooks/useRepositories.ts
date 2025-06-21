@@ -13,12 +13,18 @@ interface UseRepositoriesReturn {
   updateRepositoryStats: (repositoryName: string, stats: any) => void;
 }
 
-export function useRepositories(): UseRepositoriesReturn {
+export function useRepositories(isAuthenticated: boolean): UseRepositoriesReturn {
   const [repositories, setRepositories] = useState<RepositoryStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchRepositories = useCallback(async () => {
+    // Only fetch if authenticated
+    if (!isAuthenticated) {
+      setRepositories([]);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -30,7 +36,7 @@ export function useRepositories(): UseRepositoriesReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const subscribeToRepository = useCallback(async (request: SubscribeRepositoryRequest) => {
     try {
@@ -94,7 +100,7 @@ export function useRepositories(): UseRepositoriesReturn {
 
   useEffect(() => {
     fetchRepositories();
-  }, [fetchRepositories]);
+  }, [fetchRepositories, isAuthenticated]);
 
   return {
     repositories,
