@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import styled from 'styled-components';
 import { createPortal } from 'react-dom';
-import { PullRequest, PR_STATUS_COLORS } from '../../../types';
+import { PullRequest } from '../../../types';
 
 interface PRNodeData {
   pullRequest: PullRequest;
@@ -116,6 +116,42 @@ const TooltipValue = styled.span`
   overflow-wrap: break-word;
 `;
 
+const ReviewerRow = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+`;
+
+const ReviewerName = styled.span`
+  color: white;
+  font-size: 11px;
+`;
+
+const ReviewStatus = styled.span<{ $status: 'approved' | 'needs_review' | 'changes_requested' }>`
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+  color: ${props => 
+    props.$status === 'approved' ? '#fff' :
+    props.$status === 'needs_review' ? '#000' :
+    '#fff'
+  };
+  background-color: ${props => 
+    props.$status === 'approved' ? '#28a745' :
+    props.$status === 'needs_review' ? '#ffc107' :
+    '#dc3545'
+  };
+`;
+
+const ReviewersSection = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+`;
+
 const PRIcon = styled.div`
   position: absolute;
   top: 6px;
@@ -134,21 +170,13 @@ const PRIcon = styled.div`
 `;
 
 const getPRColor = (pr: PullRequest): string => {
-  // Check if PR needs user review - mark as yellow
+  // Yellow if user needs to take action (requested as reviewer or assigned)
   if (pr.user_is_requested_reviewer || (pr.status === 'needs_review' && !pr.user_has_reviewed)) {
     return '#f1c21b'; // Yellow for user review needed
   }
   
-  switch (pr.status) {
-    case 'needs_review':
-      return PR_STATUS_COLORS.needs_review;
-    case 'reviewed':
-      return PR_STATUS_COLORS.reviewed;
-    case 'waiting_for_changes':
-      return PR_STATUS_COLORS.waiting_for_changes;
-    default:
-      return '#6a737d';
-  }
+  // Green for everything else (reviewed or open/not involved)
+  return '#198038';
 };
 
 const getTextColor = (pr: PullRequest): string => {
@@ -156,8 +184,54 @@ const getTextColor = (pr: PullRequest): string => {
   if (pr.user_is_requested_reviewer || (pr.status === 'needs_review' && !pr.user_has_reviewed)) {
     return '#000';
   }
-  // Use white text for all other backgrounds
+  // Use white text for most backgrounds, but consider OPEN status might need adjustment
   return '#fff';
+};
+
+interface ReviewerStatus {
+  login: string;
+  status: 'approved' | 'needs_review' | 'changes_requested';
+  isTeam?: boolean;
+}
+
+const getReviewerStatuses = (pullRequest: PullRequest): ReviewerStatus[] => {
+  const reviewerMap = new Map<string, ReviewerStatus>();
+  
+  // First, add all requested reviewers with 'needs_review' status
+  pullRequest.requested_reviewers.forEach(reviewer => {
+    reviewerMap.set(reviewer.login, {
+      login: reviewer.login,
+      status: 'needs_review',
+      isTeam: false
+    });
+  });
+  
+  // Add requested teams with 'needs_review' status
+  if (pullRequest.requested_teams) {
+    pullRequest.requested_teams.forEach(team => {
+      reviewerMap.set(team.name, {
+        login: team.name,
+        status: 'needs_review',
+        isTeam: true
+      });
+    });
+  }
+  
+  // Then, add anyone who has actually reviewed (even if not originally requested)
+  // This handles team reviewers and other contributors
+  pullRequest.reviews.forEach(review => {
+    const status = review.state === 'approved' ? 'approved' : 
+                   review.state === 'changes_requested' ? 'changes_requested' : 
+                   'needs_review';
+    
+    reviewerMap.set(review.user.login, {
+      login: review.user.login,
+      status: status as 'approved' | 'needs_review' | 'changes_requested',
+      isTeam: false
+    });
+  });
+  
+  return Array.from(reviewerMap.values()).sort((a, b) => a.login.localeCompare(b.login));
 };
 
 export const PRNode: React.FC<NodeProps<PRNodeData>> = ({ data }) => {
@@ -167,6 +241,7 @@ export const PRNode: React.FC<NodeProps<PRNodeData>> = ({ data }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const color = getPRColor(pullRequest);
   const textColor = getTextColor(pullRequest);
+  const reviewerStatuses = getReviewerStatuses(pullRequest);
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -229,15 +304,33 @@ export const PRNode: React.FC<NodeProps<PRNodeData>> = ({ data }) => {
               <TooltipLabel>Author:</TooltipLabel>
               <TooltipValue>{pullRequest.user.login}</TooltipValue>
             </TooltipRow>
-            <TooltipRow>
-              <TooltipLabel>Reviewers:</TooltipLabel>
-              <TooltipValue>
-                {pullRequest.requested_reviewers.length > 0 
-                  ? pullRequest.requested_reviewers.map(r => r.login).join(', ')
-                  : 'None'
-                }
-              </TooltipValue>
-            </TooltipRow>
+            {reviewerStatuses.length > 0 ? (
+              <>
+                <TooltipRow>
+                  <TooltipLabel>Reviewers:</TooltipLabel>
+                  <TooltipValue></TooltipValue>
+                </TooltipRow>
+                <ReviewersSection>
+                  {reviewerStatuses.map(reviewer => (
+                    <ReviewerRow key={reviewer.login}>
+                      <ReviewerName>
+                        {reviewer.isTeam ? '👥 ' : ''}{reviewer.login}
+                      </ReviewerName>
+                      <ReviewStatus $status={reviewer.status}>
+                        {reviewer.status === 'approved' ? '✓ Approved' :
+                         reviewer.status === 'changes_requested' ? '✗ Changes' :
+                         '⏳ Pending'}
+                      </ReviewStatus>
+                    </ReviewerRow>
+                  ))}
+                </ReviewersSection>
+              </>
+            ) : (
+              <TooltipRow>
+                <TooltipLabel>Reviewers:</TooltipLabel>
+                <TooltipValue>None</TooltipValue>
+              </TooltipRow>
+            )}
             <TooltipRow>
               <TooltipLabel>Status:</TooltipLabel>
               <TooltipValue style={{ textTransform: 'capitalize' }}>

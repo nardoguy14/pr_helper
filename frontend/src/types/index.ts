@@ -29,6 +29,7 @@ export enum ReviewState {
 }
 
 export enum PRStatus {
+  OPEN = "open",
   NEEDS_REVIEW = "needs_review",
   REVIEWED = "reviewed",
   WAITING_FOR_CHANGES = "waiting_for_changes",
@@ -41,6 +42,14 @@ export interface Review {
   state: ReviewState;
   submitted_at?: string;
   body?: string;
+}
+
+export interface Team {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string;
+  privacy: string;
 }
 
 export interface PullRequest {
@@ -57,6 +66,7 @@ export interface PullRequest {
   user: User;
   assignees: User[];
   requested_reviewers: User[];
+  requested_teams: Team[];
   reviews: Review[];
   repository: Repository;
   draft: boolean;
@@ -167,6 +177,7 @@ export interface AppState {
 
 // Color scheme for PR statuses (GitHub-style)
 export const PR_STATUS_COLORS = {
+  [PRStatus.OPEN]: "#198038", // Green - open (not involved)
   [PRStatus.NEEDS_REVIEW]: "#f1c21b", // Yellow - needs review
   [PRStatus.REVIEWED]: "#198038", // Green - reviewed
   [PRStatus.WAITING_FOR_CHANGES]: "#da1e28", // Red - changes needed

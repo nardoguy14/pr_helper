@@ -150,8 +150,8 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
   useEffect(() => {
     const centerX = width / 2;
     const centerY = height / 2;
-    const teamRadius = Math.min(width, height) * 0.35; // Increased to give more space between teams
-    const repoRadius = Math.min(width, height) * 0.5; // Further increased to prevent overlap
+    const teamRadius = Math.min(width, height) * 0.4; // Increased for better team spacing
+    const repoRadius = Math.min(width, height) * 0.6; // Increased for better repository spacing
     
     setNodes(currentNodes => {
       const nodeMap = new Map(currentNodes.map(node => [node.id, node]));
@@ -293,8 +293,8 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         // Get team position from the existing node
         const teamX = teamNode.position.x;
         const teamY = teamNode.position.y;
-        // Adaptive radius based on number of repos - less distance for fewer nodes
-        const baseRepoRadius = Math.min(250, 120 + (teamRepos.length * 20));
+        // Increased base radius for better spacing - more distance for all repos
+        const baseRepoRadius = Math.min(350, 200 + (teamRepos.length * 15));
         
         // Calculate center of visualization
         const centerX = width / 2;
@@ -320,9 +320,9 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         const validRepoNodes = teamRepos
           .map((repoName, repoIndex) => {
             // Calculate optimal spread angle based on number of repos
-            const minAnglePerRepo = Math.PI / 6; // 30 degrees minimum per repo
+            const minAnglePerRepo = Math.PI / 5; // 36 degrees minimum per repo (increased)
             const desiredSpread = minAnglePerRepo * teamRepos.length;
-            const maxSpread = Math.PI * 1.2; // 216 degrees max (reduced from 270)
+            const maxSpread = Math.PI * 1.4; // 252 degrees max (increased spread)
             const spreadAngle = Math.min(desiredSpread, maxSpread);
             
             // Start branching outward from center (away from other teams)
@@ -330,18 +330,19 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             const angleStep = teamRepos.length > 1 ? spreadAngle / (teamRepos.length - 1) : 0;
             const repoAngle = baseAngle - spreadAngle/2 + (repoIndex * angleStep);
             
-            // Dynamic radius based on number of repos
-            const dynamicRepoRadius = baseRepoRadius;
+            // Dynamic radius - vary radius slightly to create more organic spacing
+            const radiusVariation = 30 * Math.sin(repoIndex * 0.7); // Small variation
+            const dynamicRepoRadius = baseRepoRadius + radiusVariation;
             
             // Check if this angle would collide with other teams
             let finalAngle = repoAngle;
-            const minSafeDistance = Math.PI / 4; // 45 degrees minimum from other teams
+            const minSafeDistance = Math.PI / 3; // 60 degrees minimum from other teams (increased)
             
             for (const avoidAngle of anglesToAvoid) {
               const angleDiff = Math.abs((finalAngle - avoidAngle + Math.PI) % (2 * Math.PI) - Math.PI);
               if (angleDiff < minSafeDistance) {
-                // Adjust angle to avoid collision
-                const adjustment = minSafeDistance - angleDiff;
+                // Adjust angle to avoid collision with larger adjustment
+                const adjustment = (minSafeDistance - angleDiff) * 1.5; // Increased adjustment factor
                 // Move away from the conflicting angle
                 if (finalAngle > avoidAngle) {
                   finalAngle += adjustment;
@@ -879,14 +880,12 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             }
             if (node.type === 'pr') {
               const pr = node.data?.pullRequest;
-              // Check if PR needs user review - mark as yellow
+              // Yellow if user needs to take action
               if (pr?.user_is_requested_reviewer || (pr?.status === 'needs_review' && !pr?.user_has_reviewed)) {
                 return '#f1c21b';
               }
-              if (pr?.status === 'needs_review') return '#d73a49';
-              if (pr?.status === 'reviewed') return '#28a745';
-              if (pr?.status === 'waiting_for_changes') return '#fb8500';
-              return '#6a737d';
+              // Green for everything else (reviewed or open/not involved)
+              return '#198038';
             }
             return '#fff';
           }}

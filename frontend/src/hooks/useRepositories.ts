@@ -102,6 +102,17 @@ export function useRepositories(isAuthenticated: boolean): UseRepositoriesReturn
     fetchRepositories();
   }, [fetchRepositories, isAuthenticated]);
 
+  // Add automatic polling every 30 seconds as fallback to WebSocket
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = setInterval(() => {
+      fetchRepositories();
+    }, 30000); // Poll every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchRepositories, isAuthenticated]);
+
   return {
     repositories,
     loading,

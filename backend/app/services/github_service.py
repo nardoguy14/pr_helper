@@ -113,7 +113,8 @@ class GitHubService:
             response.raise_for_status()
             reviews_data = response.json()
             
-            reviews = []
+            # First, convert all reviews
+            all_reviews = []
             for review_data in reviews_data:
                 if review_data["state"] in ["APPROVED", "CHANGES_REQUESTED", "COMMENTED"]:
                     review = Review(
@@ -130,6 +131,23 @@ class GitHubService:
                         ) if review_data.get("submitted_at") else None,
                         body=review_data.get("body")
                     )
+                    all_reviews.append(review)
+            
+            # Keep only the latest review from each reviewer
+            latest_reviews_by_user = {}
+            for review in all_reviews:
+                user_login = review.user.login
+                if user_login not in latest_reviews_by_user or (
+                    review.submitted_at and 
+                    latest_reviews_by_user[user_login].submitted_at and
+                    review.submitted_at > latest_reviews_by_user[user_login].submitted_at
+                ):
+                    latest_reviews_by_user[user_login] = review
+            
+            # Only include meaningful reviews (not just comments)
+            reviews = []
+            for review in latest_reviews_by_user.values():
+                if review.state in ["approved", "changes_requested"]:
                     reviews.append(review)
             
             return reviews
@@ -218,13 +236,13 @@ class GitHubService:
                 return None
             
             user_has_reviewed = any(
-                review.user.id == current_user.id for review in reviews
+                review.user.login == current_user.login for review in reviews
             )
             user_is_assigned = any(
-                assignee.id == current_user.id for assignee in assignees
+                assignee.login == current_user.login for assignee in assignees
             )
             user_is_requested_reviewer = any(
-                reviewer.id == current_user.id for reviewer in requested_reviewers
+                reviewer.login == current_user.login for reviewer in requested_reviewers
             )
             
             status = self._determine_pr_status(
@@ -282,20 +300,16 @@ class GitHubService:
         user_is_assigned: bool, 
         user_is_requested_reviewer: bool
     ) -> PRStatus:
+        # If you've reviewed it (approved or requested changes), you're done
         if user_has_reviewed:
             return PRStatus.REVIEWED
         
+        # If you're requested/assigned but haven't reviewed, it needs your review
         if user_is_requested_reviewer or user_is_assigned:
-            latest_reviews = {}
-            for review in reviews:
-                latest_reviews[review.user.id] = review
-            
-            if any(review.state == ReviewState.CHANGES_REQUESTED for review in latest_reviews.values()):
-                return PRStatus.WAITING_FOR_CHANGES
-            
             return PRStatus.NEEDS_REVIEW
         
-        return PRStatus.NEEDS_REVIEW
+        # Otherwise, you're not involved - just show it as open
+        return PRStatus.OPEN
 
     async def get_team_members(self, org: str, team_slug: str) -> List[User]:
         """Get all members of a team in an organization"""

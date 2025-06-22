@@ -589,6 +589,18 @@ function App() {
     }
   }, [repositories, reposLoading, fetchPullRequestsForAllRepositories]);
 
+  // Add automatic polling every 30 seconds for repository PR data as fallback to WebSocket
+  useEffect(() => {
+    if (!isAuthenticated || repositories.length === 0) return;
+
+    const interval = setInterval(() => {
+      const repositoryNames = repositories.map(repo => repo.repository.full_name);
+      fetchPullRequestsForAllRepositories(repositoryNames);
+    }, 30000); // Poll every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchPullRequestsForAllRepositories, isAuthenticated, repositories]);
+
   // Load user-relevant PRs for notifications on app start and when teams change
   useEffect(() => {
     if ((repositories.length > 0 && !reposLoading) || (teams.length > 0 && !teamsLoading)) {
@@ -698,7 +710,7 @@ function App() {
       
       console.log('Fetching PRs for team:', teamKey);
       
-      fetch(`http://localhost:8000/api/v1/teams/${team.organization}/${team.team_name}/pull-requests`)
+      fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/api/v1/teams/${team.organization}/${team.team_name}/pull-requests`)
         .then(response => {
           if (!response.ok) {
             throw new Error(`Failed to fetch team PRs: ${response.status}`);

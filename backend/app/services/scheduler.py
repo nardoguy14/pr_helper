@@ -122,6 +122,9 @@ class PRMonitorScheduler:
                     logger.info(f"Fetching PRs for team {team_key} with GraphQL...")
                     prs = await graphql_service.get_team_pull_requests(org, team_slug)
                     
+                    # Update user-specific fields for GraphQL PRs
+                    await self._update_user_specific_fields(prs)
+                    
                     # Update cache and handle changes
                     previous_prs = self.team_pr_cache.get(team_key, {})
                     
@@ -187,6 +190,10 @@ class PRMonitorScheduler:
     ):
         try:
             current_prs = await github_service.get_pull_requests(repo_name)
+            
+            # Update user-specific fields for REST API PRs
+            await self._update_user_specific_fields(current_prs)
+            
             previous_prs = self.pr_cache.get(repo_name, {})
             
             new_prs = []
@@ -718,6 +725,34 @@ class PRMonitorScheduler:
                 
         except Exception as e:
             logger.error(f"Error during immediate poll: {e}")
+
+    async def _update_user_specific_fields(self, prs: List[PullRequest]):
+        """Update user-specific fields for PRs fetched via GraphQL"""
+        current_user = token_service.user_info
+        if not current_user:
+            return
+        
+        for pr in prs:
+            # Check if current user has reviewed
+            pr.user_has_reviewed = any(
+                review.user.login == current_user["login"] for review in pr.reviews
+            )
+            
+            # Check if current user is assigned
+            pr.user_is_assigned = any(
+                assignee.login == current_user["login"] for assignee in pr.assignees
+            )
+            
+            # Check if current user is requested reviewer
+            pr.user_is_requested_reviewer = any(
+                reviewer.login == current_user["login"] for reviewer in pr.requested_reviewers
+            )
+            
+            # Update status based on user involvement
+            github_service = GitHubService()
+            pr.status = github_service._determine_pr_status(
+                pr.reviews, pr.user_has_reviewed, pr.user_is_assigned, pr.user_is_requested_reviewer
+            )
 
     async def _log_discovered_repositories_from_prs(self, prs):
         """Log discovered repositories from team PRs without creating subscriptions"""

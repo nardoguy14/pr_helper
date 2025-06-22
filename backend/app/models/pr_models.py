@@ -18,6 +18,7 @@ class ReviewState(str, Enum):
 
 
 class PRStatus(str, Enum):
+    OPEN = "open"
     NEEDS_REVIEW = "needs_review"
     REVIEWED = "reviewed"
     WAITING_FOR_CHANGES = "waiting_for_changes"
@@ -38,6 +39,15 @@ class Repository(BaseModel):
     html_url: str
     description: Optional[str] = None
     private: bool = False
+
+
+class Team(BaseModel):
+    id: int
+    github_id: str  # GitHub GraphQL node ID (e.g., "T_kwDOBcY5rc4AX5Ol")
+    name: str
+    slug: str
+    description: Optional[str] = None
+    privacy: str
 
 
 class Review(BaseModel):
@@ -62,6 +72,7 @@ class PullRequest(BaseModel):
     user: User
     assignees: List[User] = []
     requested_reviewers: List[User] = []
+    requested_teams: List[Team] = []
     reviews: List[Review] = []
     repository: Repository
     draft: bool = False

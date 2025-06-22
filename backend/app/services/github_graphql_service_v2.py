@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
 import logging
 
-from app.models.pr_models import PullRequest, Repository, User, Review
+from app.models.pr_models import PullRequest, Repository, User, Review, Team
 from app.services.token_service import token_service
 
 logger = logging.getLogger(__name__)
@@ -241,6 +241,8 @@ class GitHubGraphQLServiceV2:
                   nodes {
                     login
                     name
+                    avatarUrl
+                    url
                   }
                 }
                 reviewRequests(first: 10) {
@@ -249,6 +251,15 @@ class GitHubGraphQLServiceV2:
                       ... on User {
                         login
                         name
+                        avatarUrl
+                        url
+                      }
+                      ... on Team {
+                        id
+                        name
+                        slug
+                        description
+                        privacy
                       }
                     }
                   }
@@ -259,6 +270,8 @@ class GitHubGraphQLServiceV2:
                       login
                       ... on User {
                         name
+                        avatarUrl
+                        url
                       }
                     }
                     state
@@ -344,47 +357,86 @@ class GitHubGraphQLServiceV2:
             assignees.append(User(
                 id=0,  # Placeholder
                 login=assignee["login"],
-                avatar_url="",
-                html_url=f"https://github.com/{assignee['login']}"
+                avatar_url=assignee.get("avatarUrl", ""),
+                html_url=assignee.get("url", f"https://github.com/{assignee['login']}")
             ))
         
-        # Extract requested reviewers
+        # Extract requested reviewers and teams
         requested_reviewers = []
+        requested_teams = []
         for req in pr_data.get("reviewRequests", {}).get("nodes", []):
             reviewer = req.get("requestedReviewer")
             if reviewer:
-                requested_reviewers.append(User(
-                    id=0,  # Placeholder
-                    login=reviewer["login"],
-                    avatar_url="",
-                    html_url=f"https://github.com/{reviewer['login']}"
-                ))
+                # Check if it's a user or team
+                if "login" in reviewer:  # User
+                    requested_reviewers.append(User(
+                        id=0,  # Placeholder
+                        login=reviewer["login"],
+                        avatar_url=reviewer.get("avatarUrl", ""),
+                        html_url=reviewer.get("url", f"https://github.com/{reviewer['login']}")
+                    ))
+                elif "slug" in reviewer:  # Team
+                    # Store GitHub's node ID in github_id field, use 0 as placeholder for id
+                    requested_teams.append(Team(
+                        id=0,  # Placeholder integer ID
+                        github_id=reviewer.get("id", ""),  # GitHub GraphQL node ID
+                        name=reviewer["name"],
+                        slug=reviewer["slug"],
+                        description=reviewer.get("description", ""),
+                        privacy=reviewer.get("privacy", "")
+                    ))
         
-        # Extract reviews
-        reviews = []
-        for review in pr_data.get("reviews", {}).get("nodes", []):
+        # Extract reviews and keep only the latest from each reviewer
+        all_reviews = []
+        review_nodes = pr_data.get("reviews", {}).get("nodes", [])
+        logger.info(f"PR #{pr_data['number']} has {len(review_nodes)} review nodes from GraphQL")
+        
+        # First, convert all reviews
+        for review in review_nodes:
             if review.get("author"):
+                github_state = review.get("state", "")
+                
+                # Skip COMMENTED reviews - they're not actual reviews, just comments
+                if github_state == "COMMENTED":
+                    logger.info(f"PR #{pr_data['number']} - Skipping comment from {review['author']['login']} (not a review)")
+                    continue
+                
                 # Convert GitHub review state to our enum
                 state_mapping = {
                     "APPROVED": "approved",
                     "CHANGES_REQUESTED": "changes_requested",
-                    "COMMENTED": "pending",
                     "DISMISSED": "dismissed",
                     "PENDING": "pending"
                 }
-                review_state = state_mapping.get(review["state"], "pending")
+                review_state = state_mapping.get(github_state, "pending")
                 
-                reviews.append(Review(
+                logger.info(f"PR #{pr_data['number']} - Review from {review['author']['login']}: GitHub state '{github_state}' → our state '{review_state}'")
+                
+                review_obj = Review(
                     id=0,  # Placeholder
                     user=User(
                         id=0,  # Placeholder
                         login=review["author"]["login"],
-                        avatar_url="",
-                        html_url=f"https://github.com/{review['author']['login']}"
+                        avatar_url=review["author"].get("avatarUrl", ""),
+                        html_url=review["author"].get("url", f"https://github.com/{review['author']['login']}")
                     ),
                     state=review_state,
                     submitted_at=datetime.fromisoformat(review["submittedAt"].replace("Z", "+00:00"))
-                ))
+                )
+                all_reviews.append(review_obj)
+        
+        # Keep only the latest review from each reviewer
+        latest_reviews_by_user = {}
+        for review in all_reviews:
+            user_login = review.user.login
+            if user_login not in latest_reviews_by_user or review.submitted_at > latest_reviews_by_user[user_login].submitted_at:
+                latest_reviews_by_user[user_login] = review
+        
+        # Include all reviews (let frontend decide what to display)
+        reviews = []
+        for review in latest_reviews_by_user.values():
+            reviews.append(review)
+            logger.info(f"Added latest review from {review.user.login} with state {review.state} for PR #{pr_data['number']}")
         
         # Extract labels
         labels = [label["name"] for label in pr_data.get("labels", {}).get("nodes", [])]
@@ -392,11 +444,10 @@ class GitHubGraphQLServiceV2:
         # Determine review status
         latest_reviews = {}
         for review in reviews:
-            if review.state in ["APPROVED", "CHANGES_REQUESTED"]:
-                latest_reviews[review.user.login] = review.state
+            latest_reviews[review.user.login] = review.state
         
-        has_approval = any(state == "APPROVED" for state in latest_reviews.values())
-        needs_changes = any(state == "CHANGES_REQUESTED" for state in latest_reviews.values())
+        has_approval = any(state == "approved" for state in latest_reviews.values())
+        needs_changes = any(state == "changes_requested" for state in latest_reviews.values())
         
         if needs_changes:
             status = "waiting_for_changes"
@@ -417,6 +468,7 @@ class GitHubGraphQLServiceV2:
             user=author,
             assignees=assignees,
             requested_reviewers=requested_reviewers,
+            requested_teams=requested_teams,
             reviews=reviews,
             repository=repository,
             status=status,

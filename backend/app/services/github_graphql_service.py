@@ -199,11 +199,11 @@ class GitHubGraphQLService:
                     name=reviewer.get("name")
                 ))
         
-        # Extract reviews
-        reviews = []
+        # Extract reviews and keep only the latest from each reviewer
+        all_reviews = []
         for review in pr_data.get("reviews", {}).get("nodes", []):
             if review.get("author"):
-                reviews.append(Review(
+                all_reviews.append(Review(
                     user=User(
                         login=review["author"]["login"],
                         name=review["author"].get("name")
@@ -212,14 +212,26 @@ class GitHubGraphQLService:
                     submitted_at=datetime.fromisoformat(review["submittedAt"].replace("Z", "+00:00"))
                 ))
         
+        # Keep only the latest review from each reviewer
+        latest_reviews_by_user = {}
+        for review in all_reviews:
+            user_login = review.user.login
+            if user_login not in latest_reviews_by_user or review.submitted_at > latest_reviews_by_user[user_login].submitted_at:
+                latest_reviews_by_user[user_login] = review
+        
+        # Only include meaningful reviews (not just comments)
+        reviews = []
+        for review in latest_reviews_by_user.values():
+            if review.state in ["APPROVED", "CHANGES_REQUESTED"]:
+                reviews.append(review)
+        
         # Extract labels
         labels = [label["name"] for label in pr_data.get("labels", {}).get("nodes", [])]
         
         # Determine review status
         latest_reviews = {}
         for review in reviews:
-            if review.state in ["APPROVED", "CHANGES_REQUESTED"]:
-                latest_reviews[review.user.login] = review.state
+            latest_reviews[review.user.login] = review.state
         
         has_approval = any(state == "APPROVED" for state in latest_reviews.values())
         needs_changes = any(state == "CHANGES_REQUESTED" for state in latest_reviews.values())

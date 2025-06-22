@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { apiService } from '../services/api';
 import { PullRequest } from '../types';
 
@@ -159,6 +159,17 @@ export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn
   const getPullRequestsForRepository = useCallback((repositoryName: string): PullRequest[] => {
     return allPullRequests[repositoryName] || [];
   }, [allPullRequests]);
+
+  // Add automatic polling every 30 seconds as fallback to WebSocket
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = setInterval(() => {
+      fetchUserRelevantPullRequests();
+    }, 30000); // Poll every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [fetchUserRelevantPullRequests, isAuthenticated]);
 
   return {
     allPullRequests,
