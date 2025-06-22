@@ -98,3 +98,6 @@ coverage/
 
 # Miscellaneous
 .nyc_output
+
+# Sensitive files
+backend/test_token_and_db.py
