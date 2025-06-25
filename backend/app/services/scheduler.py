@@ -751,7 +751,7 @@ class PRMonitorScheduler:
             # Update status based on user involvement
             github_service = GitHubService()
             pr.status = github_service._determine_pr_status(
-                pr.reviews, pr.user_has_reviewed, pr.user_is_assigned, pr.user_is_requested_reviewer
+                pr.state, pr.reviews, pr.user_has_reviewed, pr.user_is_assigned, pr.user_is_requested_reviewer
             )
 
     async def _log_discovered_repositories_from_prs(self, prs):

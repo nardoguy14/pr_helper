@@ -31,7 +31,15 @@ export function useTeams(isAuthenticated: boolean): UseTeamsReturn {
       setLoading(true);
       setError(null);
       const response = await apiService.getSubscribedTeams();
-      setTeams(response.teams);
+      
+      // Only update if teams data has actually changed
+      setTeams(prev => {
+        // Deep comparison to check if data has changed
+        if (JSON.stringify(prev) === JSON.stringify(response.teams)) {
+          return prev; // Return same reference to prevent re-renders
+        }
+        return response.teams;
+      });
     } catch (err: any) {
       setError(err.message);
       console.error('Failed to fetch teams:', err);
@@ -88,18 +96,40 @@ export function useTeams(isAuthenticated: boolean): UseTeamsReturn {
   }, [fetchTeams]);
 
   const updateTeamStats = useCallback((organization: string, teamName: string, stats: any) => {
-    setTeams(prev => prev.map(team => {
-      if (team.organization === organization && team.team_name === teamName) {
-        return {
-          ...team,
-          total_open_prs: stats.total_open_prs,
-          assigned_to_user: stats.assigned_to_user,
-          review_requests: stats.review_requests,
-          last_updated: stats.last_updated
-        };
+    setTeams(prev => {
+      const targetTeam = prev.find(team => team.organization === organization && team.team_name === teamName);
+      
+      // If team not found, return previous array unchanged
+      if (!targetTeam) {
+        return prev;
       }
-      return team;
-    }));
+      
+      // Check if any stats actually changed
+      const statsChanged = 
+        targetTeam.total_open_prs !== stats.total_open_prs ||
+        targetTeam.assigned_to_user !== stats.assigned_to_user ||
+        targetTeam.review_requests !== stats.review_requests ||
+        targetTeam.last_updated !== stats.last_updated;
+      
+      // If no changes, return previous array to prevent re-renders
+      if (!statsChanged) {
+        return prev;
+      }
+      
+      // Only create new array if data actually changed
+      return prev.map(team => {
+        if (team.organization === organization && team.team_name === teamName) {
+          return {
+            ...team,
+            total_open_prs: stats.total_open_prs,
+            assigned_to_user: stats.assigned_to_user,
+            review_requests: stats.review_requests,
+            last_updated: stats.last_updated
+          };
+        }
+        return team;
+      });
+    });
   }, []);
 
   const enableTeam = useCallback(async (organization: string, teamName: string) => {

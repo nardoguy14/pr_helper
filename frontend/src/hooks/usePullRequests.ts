@@ -122,12 +122,22 @@ export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn
   }, []);
 
   const updatePullRequest = useCallback((repositoryName: string, updatedPR: PullRequest) => {
-    setAllPullRequests(prev => ({
-      ...prev,
-      [repositoryName]: (prev[repositoryName] || []).map(pr => 
-        pr.number === updatedPR.number ? updatedPR : pr
-      )
-    }));
+    setAllPullRequests(prev => {
+      const existingPRs = prev[repositoryName] || [];
+      const existingPR = existingPRs.find(pr => pr.number === updatedPR.number);
+      
+      // If PR doesn't exist or data hasn't changed, return previous state
+      if (!existingPR || JSON.stringify(existingPR) === JSON.stringify(updatedPR)) {
+        return prev;
+      }
+      
+      return {
+        ...prev,
+        [repositoryName]: existingPRs.map(pr => 
+          pr.number === updatedPR.number ? updatedPR : pr
+        )
+      };
+    });
   }, []);
 
   const removePullRequest = useCallback((repositoryName: string, prNumber: number) => {
@@ -140,11 +150,16 @@ export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn
   const addPullRequest = useCallback((repositoryName: string, newPR: PullRequest) => {
     setAllPullRequests(prev => {
       const existingPRs = prev[repositoryName] || [];
-      const exists = existingPRs.some(pr => pr.number === newPR.number);
+      const existingPR = existingPRs.find(pr => pr.number === newPR.number);
+      
+      // If PR already exists and data hasn't changed, return previous state
+      if (existingPR && JSON.stringify(existingPR) === JSON.stringify(newPR)) {
+        return prev;
+      }
       
       return {
         ...prev,
-        [repositoryName]: exists
+        [repositoryName]: existingPR
           ? existingPRs.map(pr => pr.number === newPR.number ? newPR : pr)
           : [newPR, ...existingPRs]
       };

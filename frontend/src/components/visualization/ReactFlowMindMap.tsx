@@ -130,9 +130,9 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   
   // Debug: Log whenever nodes change
-  useEffect(() => {
-    console.log('NODES CHANGED:', reactFlowNodes.length, 'nodes:', reactFlowNodes.map(n => n.id));
-  }, [reactFlowNodes]);
+  // useEffect(() => {
+  //   console.log('NODES CHANGED:', reactFlowNodes.length, 'nodes:', reactFlowNodes.map(n => n.id));
+  // }, [reactFlowNodes]);
   
   // Track which teams have been initialized to avoid recreating base team nodes
   const [initializedTeams, setInitializedTeams] = useState<Set<string>>(new Set());
@@ -155,11 +155,17 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
     
     setNodes(currentNodes => {
       const nodeMap = new Map(currentNodes.map(node => [node.id, node]));
+      const processedNodeIds = new Set<string>(); // Track processed nodes to prevent duplicates
       const updatedNodes: Node[] = [];
       
       // Update or add team nodes
       teams.forEach((team, teamIndex) => {
         const teamKey = `${team.organization}/${team.team_name}`;
+        
+        // Skip if already processed
+        if (processedNodeIds.has(teamKey)) return;
+        processedNodeIds.add(teamKey);
+        
         const existingNode = nodeMap.get(teamKey);
         
         if (existingNode) {
@@ -197,12 +203,16 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       // Update or add direct repository nodes (not from teams)
       repositories.forEach((repo, repoIndex) => {
         const repoId = repo.repository.full_name;
+        
+        // Skip if already processed
+        if (processedNodeIds.has(repoId)) return;
+        processedNodeIds.add(repoId);
+        
         const existingNode = nodeMap.get(repoId);
         
         if (existingNode) {
           // Update existing node data
           const isExpanded = expandedRepositories.has(repoId);
-          console.log(`Updating direct repo node ${repoId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
           updatedNodes.push({
             ...existingNode,
             data: {
@@ -222,7 +232,6 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           const repoY = centerY + Math.sin(repoAngle) * repoRadius;
           
           const isExpanded = expandedRepositories.has(repoId);
-          console.log(`Creating direct repo node ${repoId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
           updatedNodes.push({
             id: repoId,
             type: 'repository',
@@ -244,12 +253,15 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         if (node.type !== 'team' && !repositories.some(r => r.repository.full_name === node.id)) {
           // This is a team repository node or PR node, preserve it
           if (node.id.includes('-repo-') || node.id.includes('-pr-')) {
+            // Skip if already processed
+            if (processedNodeIds.has(node.id)) return;
+            processedNodeIds.add(node.id);
+            
             updatedNodes.push(node);
           }
         }
       });
       
-      console.log('Updating nodes:', updatedNodes.length, 'teams:', teams.length, 'direct repos:', repositories.length);
       return updatedNodes;
     });
   }, [teams, repositories, width, height, onTeamClick, onRepositoryClick, expandedTeams, expandedRepositories]);
@@ -259,9 +271,9 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
 
   // Handle team expansion/collapse by adding/removing repository nodes from teams
   useEffect(() => {
-    console.log('=== TEAM EXPANSION USEEFFECT START ===');
-    console.log('expandedTeams:', Array.from(expandedTeams));
-    console.log('prevExpandedTeams:', Array.from(prevExpandedTeams));
+    // console.log('=== TEAM EXPANSION USEEFFECT START ===');
+    // console.log('expandedTeams:', Array.from(expandedTeams));
+    // console.log('prevExpandedTeams:', Array.from(prevExpandedTeams));
 
     // Find teams that were just expanded (not in prev but in current)
     const newlyExpandedTeams = Array.from(expandedTeams).filter(team => !prevExpandedTeams.has(team));
@@ -269,7 +281,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
     // Find teams that were just collapsed (in prev but not in current)
     const newlyCollapsedTeams = Array.from(prevExpandedTeams).filter(team => !expandedTeams.has(team));
 
-    console.log('Team expansion change - Newly expanded:', newlyExpandedTeams, 'Newly collapsed:', newlyCollapsedTeams);
+    // console.log('Team expansion change - Newly expanded:', newlyExpandedTeams, 'Newly collapsed:', newlyCollapsedTeams);
 
     // Add repository nodes for newly expanded teams
     newlyExpandedTeams.forEach(teamKey => {
@@ -277,7 +289,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       if (!team) return;
 
       const teamRepos = teamRepositories[teamKey] || [];
-      console.log('Team repositories for', teamKey, ':', teamRepos);
+      // console.log('Team repositories for', teamKey, ':', teamRepos);
       
       // Add repository nodes for this team
       setNodes(currentNodes => {
@@ -362,7 +374,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             const samplePR = repoPRs[0];
             
             if (!samplePR) {
-              console.warn('No PR data found for repository:', repoName);
+              // console.warn('No PR data found for repository:', repoName);
               return null;
             }
             
@@ -379,7 +391,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             };
 
             const isExpanded = expandedRepositories.has(repoNodeId);
-            console.log(`Creating team repo node ${repoNodeId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
+            // console.log(`Creating team repo node ${repoNodeId}: isExpanded=${isExpanded}, expandedRepos=`, Array.from(expandedRepositories));
             return {
               id: repoNodeId,
               type: 'repository',
@@ -396,9 +408,9 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           })
           .filter((node): node is NonNullable<typeof node> => node !== null);
 
-        console.log('Adding repository nodes for team:', teamKey, 'Nodes to add:', validRepoNodes.length);
+        // console.log('Adding repository nodes for team:', teamKey, 'Nodes to add:', validRepoNodes.length);
         const newNodes = [...currentNodes, ...validRepoNodes];
-        console.log('Total nodes after adding repos:', newNodes.length, newNodes.map(n => n.id));
+        // console.log('Total nodes after adding repos:', newNodes.length, newNodes.map(n => n.id));
         return newNodes;
       });
 
@@ -552,11 +564,11 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
 
   // Handle repository expansion to show PR nodes
   useEffect(() => {
-    console.log('Repository expansion useEffect triggered, expandedRepositories:', Array.from(expandedRepositories));
+    // console.log('Repository expansion useEffect triggered, expandedRepositories:', Array.from(expandedRepositories));
     
     // Only process changes, not recreate everything
     setNodes(currentNodes => {
-      console.log('Current nodes before repo expansion processing:', currentNodes.length, currentNodes.map(n => n.id));
+      // console.log('Current nodes before repo expansion processing:', currentNodes.length, currentNodes.map(n => n.id));
       
       let nodesToAdd: any[] = [];
       let nodesToRemove: string[] = [];
@@ -667,7 +679,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       });
 
       if (nodesToAdd.length === 0 && nodesToRemove.length === 0) {
-        console.log('No changes needed in repository expansion');
+        // console.log('No changes needed in repository expansion');
         return currentNodes; // No changes needed
       }
 
@@ -676,7 +688,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         ...nodesToAdd
       ];
       
-      console.log('Repository expansion: Final nodes:', finalNodes.length, 'added:', nodesToAdd.length, 'removed:', nodesToRemove.length);
+      // console.log('Repository expansion: Final nodes:', finalNodes.length, 'added:', nodesToAdd.length, 'removed:', nodesToRemove.length);
       return finalNodes;
     });
 

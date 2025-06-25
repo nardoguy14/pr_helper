@@ -245,8 +245,14 @@ class GitHubService:
                 reviewer.login == current_user.login for reviewer in requested_reviewers
             )
             
+            # Determine actual PR state (GitHub API returns "closed" for merged PRs too)
+            if pr_data.get("merged_at") or pr_data.get("merged"):
+                pr_state = PRState.MERGED
+            else:
+                pr_state = PRState(pr_data["state"])
+            
             status = self._determine_pr_status(
-                reviews, user_has_reviewed, user_is_assigned, user_is_requested_reviewer
+                pr_state, reviews, user_has_reviewed, user_is_assigned, user_is_requested_reviewer
             )
             
             return PullRequest(
@@ -254,7 +260,7 @@ class GitHubService:
                 number=pr_data["number"],
                 title=pr_data["title"],
                 body=pr_data.get("body"),
-                state=PRState(pr_data["state"]),
+                state=pr_state,
                 html_url=pr_data["html_url"],
                 created_at=datetime.fromisoformat(
                     pr_data["created_at"].replace("Z", "+00:00")
@@ -295,11 +301,16 @@ class GitHubService:
     
     def _determine_pr_status(
         self, 
+        pr_state: PRState,
         reviews: List[Review], 
         user_has_reviewed: bool, 
         user_is_assigned: bool, 
         user_is_requested_reviewer: bool
     ) -> PRStatus:
+        # If PR is closed or merged, it doesn't need review regardless of previous requests
+        if pr_state in [PRState.CLOSED, PRState.MERGED]:
+            return PRStatus.OPEN
+        
         # If you've reviewed it (approved or requested changes), you're done
         if user_has_reviewed:
             return PRStatus.REVIEWED

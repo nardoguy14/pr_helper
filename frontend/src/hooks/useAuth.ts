@@ -353,14 +353,48 @@ export const useAuth = () => {
     console.log('useAuth: Stored token found:', !!storedToken);
     
     if (storedToken) {
-      console.log('useAuth: Validating stored token...');
-      // Try to validate stored token
-      const result = await setToken(storedToken);
-      if (!result.success) {
-        console.log('useAuth: Stored token is invalid, removing and checking server status');
-        // Stored token is invalid, remove it
-        await removeStoredToken();
-        await checkAuthStatus();
+      console.log('useAuth: Attempting to use stored token...');
+      
+      // Try to send the stored token to the backend directly
+      // This is more reliable than GitHub validation which can fail due to network issues
+      try {
+        const response = await makeApiRequest('/api/v1/auth/token', {
+          method: 'POST',
+          body: JSON.stringify({ token: storedToken }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('useAuth: Stored token validated successfully with backend');
+          setAuthState({
+            isAuthenticated: true,
+            user: data.user,
+            isLoading: false,
+            error: null,
+            lastValidated: new Date().toISOString(),
+            tokenExpired: false,
+            rateLimited: false,
+          });
+          return;
+        } else {
+          console.log('useAuth: Stored token rejected by backend, trying full validation');
+          // Fall back to full validation
+          const result = await setToken(storedToken);
+          if (!result.success) {
+            console.log('useAuth: Stored token is invalid, removing');
+            await removeStoredToken();
+            await checkAuthStatus();
+          }
+        }
+      } catch (error) {
+        console.error('useAuth: Error validating stored token with backend:', error);
+        // If backend is not available, keep the token and try later
+        console.log('useAuth: Backend unavailable, keeping stored token for later validation');
+        setAuthState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: 'Backend unavailable - will retry authentication'
+        }));
       }
     } else {
       console.log('useAuth: No stored token, checking server auth status');
@@ -399,31 +433,58 @@ const STORAGE_KEY = 'github_token';
 
 const storeToken = async (token: string): Promise<void> => {
   try {
-    if (window.electronAPI) {
-      // Store securely in Electron
-      // For now, use localStorage - in production, this should use encrypted storage
-      localStorage.setItem(STORAGE_KEY, btoa(token));
+    if (window.electronAPI && (window.electronAPI as any).storeSecureData) {
+      // Use Electron's secure storage if available
+      console.log('useAuth: Storing token in Electron secure storage');
+      await (window.electronAPI as any).storeSecureData('github_token', token);
     } else {
-      // Store in browser localStorage (encrypted)
+      // Fallback to localStorage with base64 encoding
+      console.log('useAuth: Storing token in localStorage');
       localStorage.setItem(STORAGE_KEY, btoa(token));
     }
   } catch (error) {
     console.error('Error storing token:', error);
+    // Fallback to localStorage if secure storage fails
+    localStorage.setItem(STORAGE_KEY, btoa(token));
   }
 };
 
 const getStoredToken = async (): Promise<string | null> => {
   try {
+    if (window.electronAPI && (window.electronAPI as any).getSecureData) {
+      // Try Electron's secure storage first
+      console.log('useAuth: Retrieving token from Electron secure storage');
+      const token = await (window.electronAPI as any).getSecureData('github_token');
+      if (token) return token;
+    }
+    
+    // Fallback to localStorage
+    console.log('useAuth: Retrieving token from localStorage');
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored ? atob(stored) : null;
   } catch (error) {
     console.error('Error retrieving token:', error);
-    return null;
+    // Try localStorage as final fallback
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? atob(stored) : null;
+    } catch (fallbackError) {
+      console.error('Error with localStorage fallback:', fallbackError);
+      return null;
+    }
   }
 };
 
 const removeStoredToken = async (): Promise<void> => {
   try {
+    if (window.electronAPI && (window.electronAPI as any).removeSecureData) {
+      // Remove from Electron's secure storage
+      console.log('useAuth: Removing token from Electron secure storage');
+      await (window.electronAPI as any).removeSecureData('github_token');
+    }
+    
+    // Also remove from localStorage
+    console.log('useAuth: Removing token from localStorage');
     localStorage.removeItem(STORAGE_KEY);
   } catch (error) {
     console.error('Error removing token:', error);

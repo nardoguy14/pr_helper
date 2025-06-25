@@ -720,10 +720,20 @@ function App() {
         .then(data => {
           console.log('Fetched PRs for team:', teamKey, data.pull_requests?.length || 0);
           
-          setAllTeamPullRequests(prev => ({
-            ...prev,
-            [teamKey]: data.pull_requests || []
-          }));
+          setAllTeamPullRequests(prev => {
+            const newPRs = data.pull_requests || [];
+            const existingPRs = prev[teamKey] || [];
+            
+            // Only update if data has actually changed
+            if (JSON.stringify(existingPRs) === JSON.stringify(newPRs)) {
+              return prev;
+            }
+            
+            return {
+              ...prev,
+              [teamKey]: newPRs
+            };
+          });
         })
         .catch(error => {
           console.error('Failed to fetch team PRs:', error);
@@ -915,11 +925,16 @@ function App() {
 
   // Create teams with filtered PR counts based on date filter
   const teamsWithFilteredCounts = useMemo(() => {
-    return teams.map(team => {
+    // First deduplicate teams by organization/team_name to prevent React key conflicts
+    const uniqueTeams = teams.filter((team, index, array) => 
+      array.findIndex(t => t.organization === team.organization && t.team_name === team.team_name) === index
+    );
+    
+    return uniqueTeams.map(team => {
       const teamKey = `${team.organization}/${team.team_name}`;
       const teamPRs = filteredTeamPullRequests[teamKey];
       
-      console.log(`Team ${teamKey}: original count=${team.total_open_prs}, has fetched PRs=${!!teamPRs}, fetched count=${teamPRs?.length || 0}`);
+      // console.log(`Team ${teamKey}: original count=${team.total_open_prs}, has fetched PRs=${!!teamPRs}, fetched count=${teamPRs?.length || 0}`);
       
       // If we have fetched PRs for this team, use the filtered count
       // Otherwise, return the team with a flag indicating we need to fetch PRs
