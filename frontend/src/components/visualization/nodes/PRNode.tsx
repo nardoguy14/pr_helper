@@ -170,13 +170,33 @@ const PRIcon = styled.div`
 `;
 
 const getPRColor = (pr: PullRequest): string => {
-  // Yellow if user needs to take action (requested as reviewer or assigned)
+  // Yellow if user needs to review (requested as reviewer or assigned and hasn't reviewed)
   if (pr.user_is_requested_reviewer || (pr.status === 'needs_review' && !pr.user_has_reviewed)) {
-    return '#f1c21b'; // Yellow for user review needed
+    return '#f1c21b'; // Yellow for needs my review
   }
   
-  // Green for everything else (reviewed or open/not involved)
-  return '#198038';
+  // Purple for merged PRs
+  if (pr.state === 'merged') {
+    return '#8b5cf6'; // Purple for merged
+  }
+  
+  // Gray for draft PRs
+  if (pr.draft) {
+    return '#6b7280'; // Gray for draft
+  }
+  
+  // Red for closed PRs
+  if (pr.state === 'closed') {
+    return '#ef4444'; // Red for closed
+  }
+  
+  // Green for open PRs
+  if (pr.state === 'open') {
+    return '#22c55e'; // Green for open
+  }
+  
+  // Fallback gray
+  return '#6b7280';
 };
 
 const getTextColor = (pr: PullRequest): string => {
@@ -184,7 +204,8 @@ const getTextColor = (pr: PullRequest): string => {
   if (pr.user_is_requested_reviewer || (pr.status === 'needs_review' && !pr.user_has_reviewed)) {
     return '#000';
   }
-  // Use white text for most backgrounds, but consider OPEN status might need adjustment
+  
+  // Use white text for all other colored backgrounds (purple, green, gray)
   return '#fff';
 };
 

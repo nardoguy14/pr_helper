@@ -592,7 +592,19 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           repositoryName = nodeId;
         }
         
-        const prs = allPullRequests[repositoryName] || [];
+        // For team repository nodes, use team-specific PRs filtered by repository
+        // For direct repository nodes, use allPullRequests
+        let prs = [];
+        if (repoNode.id.includes('-repo-')) {
+          // This is a team repository node - use team PRs
+          const teamNodeId = repoNode.id.split('-repo-')[0];
+          const teamPRs = allTeamPullRequests[teamNodeId] || [];
+          prs = teamPRs.filter((pr: any) => pr.repository.full_name === repositoryName);
+        } else {
+          // This is a direct repository node - use direct repo PRs
+          prs = allPullRequests[repositoryName] || [];
+        }
+        
         if (prs.length === 0) return;
         
         // Check if this specific repo node already has PR nodes
@@ -714,7 +726,18 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
               repositoryName = nodeId;
             }
             
-            const prs = allPullRequests[repositoryName] || [];
+            // For team repository nodes, use team-specific PRs filtered by repository
+            // For direct repository nodes, use allPullRequests
+            let prs = [];
+            if (nodeId.includes('-repo-')) {
+              // This is a team repository node - use team PRs
+              const teamNodeId = nodeId.split('-repo-')[0];
+              const teamPRs = allTeamPullRequests[teamNodeId] || [];
+              prs = teamPRs.filter((pr: any) => pr.repository.full_name === repositoryName);
+            } else {
+              // This is a direct repository node - use direct repo PRs
+              prs = allPullRequests[repositoryName] || [];
+            }
             if (prs.length === 0) return;
               const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
               const hasPREdges = currentEdges.some(edge => edge.source === repoNode.id && edge.id.includes('-pr-'));

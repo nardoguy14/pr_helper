@@ -5,7 +5,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.models.pr_models import (
-    PullRequest, User, Repository, Review, PRState, ReviewState, PRStatus
+    PullRequest, User, Repository, Review, Team, PRState, ReviewState, PRStatus
 )
 from app.services.token_service import token_service
 
@@ -227,6 +227,18 @@ class GitHubService:
                 for reviewer in pr_data.get("requested_reviewers", [])
             ]
             
+            # Extract requested teams
+            requested_teams = []
+            for team in pr_data.get("requested_teams", []):
+                requested_teams.append(Team(
+                    id=team.get("id", 0),
+                    github_id=str(team.get("id", "")),
+                    name=team.get("name", ""),
+                    slug=team.get("slug", ""),
+                    description=team.get("description", ""),
+                    privacy=team.get("privacy", "")
+                ))
+            
             reviews = await self.get_pull_request_reviews(
                 repository.full_name, pr_data["number"]
             )
@@ -244,6 +256,12 @@ class GitHubService:
             user_is_requested_reviewer = any(
                 reviewer.login == current_user.login for reviewer in requested_reviewers
             )
+            
+            # Also check if user is part of any requested teams
+            # BUT only if the user hasn't already reviewed the PR
+            # If user has reviewed, their part is done even if team review is still pending
+            if not user_is_requested_reviewer and requested_teams and not user_has_reviewed:
+                user_is_requested_reviewer = True
             
             # Determine actual PR state (GitHub API returns "closed" for merged PRs too)
             if pr_data.get("merged_at") or pr_data.get("merged"):
@@ -277,6 +295,7 @@ class GitHubService:
                 user=user,
                 assignees=assignees,
                 requested_reviewers=requested_reviewers,
+                requested_teams=requested_teams,
                 reviews=reviews,
                 repository=repository,
                 draft=pr_data.get("draft", False),

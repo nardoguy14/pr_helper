@@ -743,10 +743,16 @@ class PRMonitorScheduler:
                 assignee.login == current_user["login"] for assignee in pr.assignees
             )
             
-            # Check if current user is requested reviewer
+            # Check if current user is requested reviewer (individual or team)
             pr.user_is_requested_reviewer = any(
                 reviewer.login == current_user["login"] for reviewer in pr.requested_reviewers
             )
+            
+            # Also check if user is part of any requested teams
+            # BUT only if the user hasn't already reviewed the PR
+            # If user has reviewed, their part is done even if team review is still pending
+            if not pr.user_is_requested_reviewer and pr.requested_teams and not pr.user_has_reviewed:
+                pr.user_is_requested_reviewer = True
             
             # Update status based on user involvement
             github_service = GitHubService()

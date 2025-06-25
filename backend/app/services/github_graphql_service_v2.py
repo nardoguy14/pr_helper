@@ -200,9 +200,13 @@ class GitHubGraphQLServiceV2:
             raise ValueError("GitHub token not set")
         token = token_service.token
         
-        # Build search query
+        # Build search query - include all PR states but limit to recent activity
+        # Sort by updated to get most recently active PRs first
+        # Include PRs updated in the last 6 months to avoid too much old data
+        from datetime import datetime, timedelta
+        six_months_ago = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
         author_query = " ".join([f"author:{author}" for author in authors])
-        search_query = f"org:{organization} type:pr state:open {author_query}"
+        search_query = f"org:{organization} type:pr {author_query} updated:>={six_months_ago} sort:updated"
         logger.info(f"GraphQL search query: {search_query}")
         
         query = """
@@ -218,8 +222,10 @@ class GitHubGraphQLServiceV2:
                 title
                 body
                 url
+                state
                 createdAt
                 updatedAt
+                isDraft
                 repository {
                   id
                   name
@@ -327,6 +333,18 @@ class GitHubGraphQLServiceV2:
         
         logger.info(f"Total PRs found for authors {authors}: {len(all_prs)}")
         return all_prs
+    
+    def _determine_pr_state(self, pr_data: Dict[str, Any]) -> str:
+        """Determine PR state from GraphQL data"""
+        github_state = pr_data.get("state", "OPEN")
+        
+        # Convert GitHub GraphQL state to our enum values
+        if github_state == "MERGED":
+            return "merged"
+        elif github_state == "CLOSED":
+            return "closed"
+        else:  # OPEN or any other state
+            return "open"
     
     def _convert_graphql_pr(self, pr_data: Dict[str, Any]) -> PullRequest:
         """Convert GraphQL PR data to our PullRequest model"""
@@ -461,7 +479,7 @@ class GitHubGraphQLServiceV2:
             number=pr_data["number"],
             title=pr_data["title"],
             body=pr_data.get("body", ""),
-            state="open",  # All search results are open PRs
+            state=self._determine_pr_state(pr_data),
             html_url=pr_data["url"],
             created_at=datetime.fromisoformat(pr_data["createdAt"].replace("Z", "+00:00")),
             updated_at=datetime.fromisoformat(pr_data["updatedAt"].replace("Z", "+00:00")),
@@ -471,6 +489,7 @@ class GitHubGraphQLServiceV2:
             requested_teams=requested_teams,
             reviews=reviews,
             repository=repository,
+            draft=pr_data.get("isDraft", False),  # Map GraphQL isDraft to draft field
             status=status,
             user_is_assigned=False,  # Will be set by the scheduler
             user_is_requested_reviewer=False,  # Will be set by the scheduler
