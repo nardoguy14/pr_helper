@@ -158,8 +158,33 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       const processedNodeIds = new Set<string>(); // Track processed nodes to prevent duplicates
       const updatedNodes: Node[] = [];
       
-      // Update or add team nodes
-      teams.forEach((team, teamIndex) => {
+      // FIRST: Filter teams to only those that actually have content to show
+      const visibleTeams = teams.filter(team => {
+        const teamKey = `${team.organization}/${team.team_name}`;
+        const teamPRs = allTeamPullRequests[teamKey];
+        // Only show teams that have PRs or are still loading
+        return !teamPRs || teamPRs.length > 0;
+      });
+      
+      // NOW calculate positions based on the FILTERED/VISIBLE teams, not the full input set
+      const currentTeamIds = visibleTeams.map(t => `${t.organization}/${t.team_name}`).sort();
+      const existingTeamIds = Array.from(nodeMap.keys()).filter(id => 
+        visibleTeams.some(t => `${t.organization}/${t.team_name}` === id)
+      ).sort();
+      
+      // Check if the set of VISIBLE teams has changed
+      const teamSetChanged = currentTeamIds.length !== existingTeamIds.length || 
+                            !currentTeamIds.every((id, index) => id === existingTeamIds[index]);
+      
+      console.log('🎯 ReactFlowMindMap positioning based on VISIBLE teams:', {
+        inputTeams: teams.length,
+        visibleTeams: visibleTeams.length,
+        currentTeamIds,
+        teamSetChanged
+      });
+      
+      // Update or add team nodes based on VISIBLE teams only
+      visibleTeams.forEach((team, teamIndex) => {
         const teamKey = `${team.organization}/${team.team_name}`;
         
         // Skip if already processed
@@ -169,9 +194,18 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         const existingNode = nodeMap.get(teamKey);
         
         if (existingNode) {
-          // Update existing node data
+          // Only recalculate position if team set changed, otherwise preserve position
+          let position = existingNode.position;
+          if (teamSetChanged) {
+            const teamAngle = (teamIndex / visibleTeams.length) * 2 * Math.PI;
+            const teamX = centerX + Math.cos(teamAngle) * teamRadius;
+            const teamY = centerY + Math.sin(teamAngle) * teamRadius;
+            position = { x: teamX, y: teamY };
+          }
+          
           updatedNodes.push({
             ...existingNode,
+            position: position,
             data: {
               ...existingNode.data,
               team: team,
@@ -179,8 +213,8 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             },
           });
         } else {
-          // Create new node
-          const teamAngle = (teamIndex / teams.length) * 2 * Math.PI;
+          // Create new node with calculated position
+          const teamAngle = (teamIndex / visibleTeams.length) * 2 * Math.PI;
           const teamX = centerX + Math.cos(teamAngle) * teamRadius;
           const teamY = centerY + Math.sin(teamAngle) * teamRadius;
           
@@ -200,8 +234,30 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         }
       });
       
-      // Update or add direct repository nodes (not from teams)
-      repositories.forEach((repo, repoIndex) => {
+      // FIRST: Filter repositories to only those that actually have content to show
+      const visibleRepositories = repositories.filter(repo => {
+        const repoPRs = allPullRequests[repo.repository.full_name];
+        // Only show repositories that have PRs or are still loading
+        return !repoPRs || repoPRs.length > 0;
+      });
+      
+      // NOW calculate positions based on VISIBLE repositories
+      const currentRepoIds = visibleRepositories.map(r => r.repository.full_name).sort();
+      const existingRepoIds = Array.from(nodeMap.keys()).filter(id => 
+        visibleRepositories.some(r => r.repository.full_name === id)
+      ).sort();
+      
+      // Check if the set of VISIBLE repositories has changed
+      const repoSetChanged = currentRepoIds.length !== existingRepoIds.length || 
+                            !currentRepoIds.every((id, index) => id === existingRepoIds[index]);
+      
+      console.log('🎯 ReactFlowMindMap positioning based on VISIBLE repositories:', {
+        inputRepos: repositories.length,
+        visibleRepos: visibleRepositories.length,
+        repoSetChanged
+      });
+      
+      visibleRepositories.forEach((repo, repoIndex) => {
         const repoId = repo.repository.full_name;
         
         // Skip if already processed
@@ -209,12 +265,25 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         processedNodeIds.add(repoId);
         
         const existingNode = nodeMap.get(repoId);
+        const isExpanded = expandedRepositories.has(repoId);
         
         if (existingNode) {
-          // Update existing node data
-          const isExpanded = expandedRepositories.has(repoId);
+          // Only recalculate position if repo set changed, otherwise preserve position
+          let position = existingNode.position;
+          if (repoSetChanged) {
+            const startAngle = visibleTeams.length > 0 ? Math.PI * 0.25 : 0;
+            const angleRange = Math.PI * 1.5;
+            const repoAngle = visibleRepositories.length === 1 
+              ? startAngle + angleRange / 2 
+              : startAngle + (repoIndex / (visibleRepositories.length - 1)) * angleRange;
+            const repoX = centerX + Math.cos(repoAngle) * repoRadius;
+            const repoY = centerY + Math.sin(repoAngle) * repoRadius;
+            position = { x: repoX, y: repoY };
+          }
+          
           updatedNodes.push({
             ...existingNode,
+            position: position,
             data: {
               ...existingNode.data,
               repository: repo,
@@ -222,16 +291,15 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             },
           });
         } else {
-          // Create new node
-          const startAngle = teams.length > 0 ? Math.PI * 0.25 : 0;
+          // Create new node with calculated position
+          const startAngle = visibleTeams.length > 0 ? Math.PI * 0.25 : 0;
           const angleRange = Math.PI * 1.5;
-          const repoAngle = repositories.length === 1 
+          const repoAngle = visibleRepositories.length === 1 
             ? startAngle + angleRange / 2 
-            : startAngle + (repoIndex / (repositories.length - 1)) * angleRange;
+            : startAngle + (repoIndex / (visibleRepositories.length - 1)) * angleRange;
           const repoX = centerX + Math.cos(repoAngle) * repoRadius;
           const repoY = centerY + Math.sin(repoAngle) * repoRadius;
           
-          const isExpanded = expandedRepositories.has(repoId);
           updatedNodes.push({
             id: repoId,
             type: 'repository',
@@ -264,7 +332,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       
       return updatedNodes;
     });
-  }, [teams, repositories, width, height, onTeamClick, onRepositoryClick, expandedTeams, expandedRepositories]);
+  }, [teams, repositories, width, height, onTeamClick, onRepositoryClick, expandedTeams, expandedRepositories, allTeamPullRequests, allPullRequests]);
 
   // Track previous expanded teams to detect actual collapses
   const [prevExpandedTeams, setPrevExpandedTeams] = useState<Set<string>>(new Set());
@@ -288,8 +356,22 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
       const team = teams.find(t => `${t.organization}/${t.team_name}` === teamKey);
       if (!team) return;
 
-      const teamRepos = teamRepositories[teamKey] || [];
-      // console.log('Team repositories for', teamKey, ':', teamRepos);
+      const allTeamRepos = teamRepositories[teamKey] || [];
+      
+      // FILTER: Only include repositories that have PRs after filtering
+      const teamPRs = allTeamPullRequests[teamKey] || [];
+      const visibleTeamRepos = allTeamRepos.filter(repoName => {
+        const repoPRs = teamPRs.filter((pr: any) => pr.repository.full_name === repoName);
+        return repoPRs.length > 0; // Only show repos with PRs
+      });
+      
+      console.log(`🎯 Team ${teamKey}: ${allTeamRepos.length} total repos → ${visibleTeamRepos.length} visible repos with PRs`);
+      
+      // Skip if no visible repositories
+      if (visibleTeamRepos.length === 0) {
+        console.log(`🎯 Skipping ${teamKey} - no repositories with PRs after filtering`);
+        return;
+      }
       
       // Add repository nodes for this team
       setNodes(currentNodes => {
@@ -305,8 +387,8 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         // Get team position from the existing node
         const teamX = teamNode.position.x;
         const teamY = teamNode.position.y;
-        // Increased base radius for better spacing - more distance for all repos
-        const baseRepoRadius = Math.min(350, 200 + (teamRepos.length * 15));
+        // Calculate radius based on VISIBLE repos, not all repos
+        const baseRepoRadius = Math.min(350, 200 + (visibleTeamRepos.length * 15));
         
         // Calculate center of visualization
         const centerX = width / 2;
@@ -329,17 +411,17 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           return angleToOther;
         });
 
-        const validRepoNodes = teamRepos
+        const validRepoNodes = visibleTeamRepos
           .map((repoName, repoIndex) => {
-            // Calculate optimal spread angle based on number of repos
+            // Calculate optimal spread angle based on VISIBLE repos count
             const minAnglePerRepo = Math.PI / 5; // 36 degrees minimum per repo (increased)
-            const desiredSpread = minAnglePerRepo * teamRepos.length;
+            const desiredSpread = minAnglePerRepo * visibleTeamRepos.length;
             const maxSpread = Math.PI * 1.4; // 252 degrees max (increased spread)
             const spreadAngle = Math.min(desiredSpread, maxSpread);
             
             // Start branching outward from center (away from other teams)
             const baseAngle = teamAngleFromCenter;
-            const angleStep = teamRepos.length > 1 ? spreadAngle / (teamRepos.length - 1) : 0;
+            const angleStep = visibleTeamRepos.length > 1 ? spreadAngle / (visibleTeamRepos.length - 1) : 0;
             const repoAngle = baseAngle - spreadAngle/2 + (repoIndex * angleStep);
             
             // Dynamic radius - vary radius slightly to create more organic spacing
@@ -378,8 +460,8 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
               return null;
             }
             
-            // Use the filtered PRs that were passed in (already filtered by date in App.tsx)
-            const filteredRepoPRs = allTeamPullRequests[teamKey]?.filter((pr: any) => pr.repository.full_name === repoName) || repoPRs;
+            // Use the filtered PRs that were passed in (already filtered by date/status/author in App.tsx)
+            const filteredRepoPRs = teamPRs.filter((pr: any) => pr.repository.full_name === repoName);
             
             const repoStats = {
               repository: samplePR.repository,
@@ -419,7 +501,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
         const hasRepoEdges = currentEdges.some(edge => edge.id.includes(`edge-${teamKey}-`));
         if (hasRepoEdges) return currentEdges; // Already have edges for this team
 
-        const newRepoEdges = teamRepos.map(repoName => ({
+        const newRepoEdges = visibleTeamRepos.map(repoName => ({
           id: `edge-${teamKey}-${repoName}`,
           source: teamKey,
           target: `${teamKey}-repo-${repoName}`,
