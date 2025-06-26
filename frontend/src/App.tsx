@@ -240,7 +240,19 @@ const StatusFilterContainer = styled.div`
   border: 1px solid #e1e4e8;
   border-radius: 8px;
   padding: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+`;
+
+const PRCount = styled.div`
+  text-align: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #586069;
+
+  strong {
+    color: #24292e;
+    font-weight: 600;
+  }
 `;
 
 const StatusFilterTitle = styled.h4`
@@ -440,8 +452,10 @@ function App() {
   const [dateFilter, setDateFilter] = useState<{ startDate: Date | null; endDate: Date | null }>(getDefaultDateRange());
   // Status filter state - default to show only open PRs (draft PRs have state=open)
   const [statusFilter, setStatusFilter] = useState<Set<PRState>>(new Set([PRState.OPEN]));
-  // Separate filter for draft status - default to include drafts
-  const [includeDrafts, setIncludeDrafts] = useState(true);
+  // Separate filter for draft status - default to exclude drafts
+  const [includeDrafts, setIncludeDrafts] = useState(false);
+  // PR Status filter (needs_review, etc.) - default to show needs_review PRs
+  const [prStatusFilter, setPrStatusFilter] = useState<Set<string>>(new Set(['needs_review']));
   // Author filter state - empty set means show all authors
   const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
   
@@ -914,12 +928,31 @@ function App() {
     await openExternal(pr.html_url);
   }, []);
 
-  // Get all PRs from both repositories and teams
+  // Get all unique PRs from both repositories and teams, filtered by date range
   const allPRs = useMemo(() => {
     const repoPRs = Object.values(allPullRequests).flat();
     const teamPRs = Object.values(allTeamPullRequests).flat();
-    return [...repoPRs, ...teamPRs];
-  }, [allPullRequests, allTeamPullRequests]);
+    const allPRsArray = [...repoPRs, ...teamPRs];
+    
+    // First filter by date range
+    const dateFilteredPRs = allPRsArray.filter(pr => {
+      const prDate = new Date(pr.created_at);
+      const afterStart = !dateFilter.startDate || prDate >= dateFilter.startDate;
+      const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
+      return afterStart && beforeEnd;
+    });
+    
+    // Then deduplicate by repository + PR number
+    const uniquePRsMap = new Map();
+    dateFilteredPRs.forEach(pr => {
+      const key = `${pr.repository.full_name}#${pr.number}`;
+      if (!uniquePRsMap.has(key)) {
+        uniquePRsMap.set(key, pr);
+      }
+    });
+    
+    return Array.from(uniquePRsMap.values());
+  }, [allPullRequests, allTeamPullRequests, dateFilter]);
 
   // For direct repository subscriptions (currently unused since you only have team subscriptions)
   const filteredPullRequests = useMemo(() => {
@@ -957,16 +990,39 @@ function App() {
         const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
         const passesDateFilter = afterStart && beforeEnd;
         
-        // Status filter
-        const passesStatusFilter = statusFilter.has(pr.state);
+        // Status and PR Status filtering logic
+        const isDraft = pr.state === PRState.OPEN && pr.draft;
         
-        // Draft filter (only applies to open PRs)
-        const passesDraftFilter = pr.state !== PRState.OPEN || includeDrafts || !pr.draft;
+        // Draft filter (only applies to open draft PRs)
+        const passesDraftFilter = !isDraft || includeDrafts;
+        
+        // Combined state and status filter logic - must match at least one active filter
+        const hasStateFilter = statusFilter.size > 0;
+        const hasPrStatusFilter = prStatusFilter.size > 0;
+        
+        let passesStateOrStatusFilter = false;
+        
+        if (hasStateFilter || hasPrStatusFilter) {
+          const passesStateFilter = isDraft ? true : statusFilter.has(pr.state);
+          const passesPrStatusFilter = prStatusFilter.has(pr.status);
+          
+          if (hasStateFilter && hasPrStatusFilter) {
+            // If both filters are active, PR must match at least one
+            passesStateOrStatusFilter = passesStateFilter || passesPrStatusFilter;
+          } else if (hasStateFilter) {
+            // Only state filter active
+            passesStateOrStatusFilter = passesStateFilter;
+          } else {
+            // Only PR status filter active
+            passesStateOrStatusFilter = passesPrStatusFilter;
+          }
+        }
+        // If no filters active, don't show anything (passesStateOrStatusFilter stays false)
         
         // Author filter (empty set means show all authors)
         const passesAuthorFilter = authorFilter.size === 0 || (pr.user && authorFilter.has(pr.user.login));
         
-        return passesDateFilter && passesStatusFilter && passesDraftFilter && passesAuthorFilter;
+        return passesDateFilter && passesStateOrStatusFilter && passesDraftFilter && passesAuthorFilter;
       });
       // Always include the team, even if no PRs pass the filters (empty array)
       filtered[team] = filteredPRs;
@@ -978,7 +1034,112 @@ function App() {
     });
     
     return filtered;
-  }, [allTeamPullRequests, dateFilter, statusFilter, includeDrafts, authorFilter]);
+  }, [allTeamPullRequests, dateFilter, statusFilter, includeDrafts, prStatusFilter, authorFilter]);
+
+  // Compute status counts from PRs that would be visible as nodes in the mind map
+  const statusCounts = useMemo(() => {
+    const visiblePRs = new Map();
+    
+    // Only count PRs from expanded repository nodes (same logic as visiblePRNodeCount)
+    expandedRepositoryNodes.forEach(nodeId => {
+      // For team repositories (format: "teamkey-repo-reponame")
+      if (nodeId.includes('-repo-')) {
+        const parts = nodeId.split('-repo-');
+        const teamKey = parts[0];
+        const repoName = parts[1];
+        
+        const teamPRs = filteredTeamPullRequests[teamKey] || [];
+        teamPRs.forEach(pr => {
+          if (pr.repository.full_name === repoName) {
+            const key = `${pr.repository.full_name}#${pr.number}`;
+            if (!visiblePRs.has(key)) {
+              visiblePRs.set(key, pr);
+            }
+          }
+        });
+      }
+      // For direct repositories (format: "repo-<repoName>")  
+      else if (nodeId.startsWith('repo-')) {
+        const repoName = nodeId.substring(5);
+        // Find PRs for this repository in filteredTeamPullRequests
+        Object.values(filteredTeamPullRequests).forEach(teamPRs => {
+          teamPRs.forEach(pr => {
+            if (pr.repository.full_name === repoName) {
+              const key = `${pr.repository.full_name}#${pr.number}`;
+              if (!visiblePRs.has(key)) {
+                visiblePRs.set(key, pr);
+              }
+            }
+          });
+        });
+      }
+    });
+    
+    // Get the visible PRs as an array
+    const visiblePRsArray = Array.from(visiblePRs.values());
+    
+    // Count by status, excluding drafts from open count
+    const counts: Record<string, number> = {};
+    Object.values(PRState).forEach(state => {
+      if (state === PRState.OPEN) {
+        // Open count should exclude draft PRs
+        counts[state] = visiblePRsArray.filter(pr => pr.state === state && !pr.draft).length;
+      } else {
+        counts[state] = visiblePRsArray.filter(pr => pr.state === state).length;
+      }
+    });
+    
+    // Count drafts separately (only from OPEN PRs)
+    counts.drafts = visiblePRsArray.filter(pr => pr.state === PRState.OPEN && pr.draft).length;
+    
+    // Count needs review PRs
+    counts.needs_review = visiblePRsArray.filter(pr => pr.status === 'needs_review').length;
+    
+    return counts;
+  }, [expandedRepositoryNodes, filteredTeamPullRequests]);
+
+  // Count PRs that would be visible as nodes in the mind map (only when repository nodes are expanded)
+  const visiblePRNodeCount = useMemo(() => {
+    const visiblePRs = new Map();
+    
+    // Only count PRs from expanded repository nodes (not just expanded teams)
+    // PR nodes are only shown when their repository node is expanded
+    expandedRepositoryNodes.forEach(nodeId => {
+      // For team repositories (format: "teamkey-repo-reponame")
+      if (nodeId.includes('-repo-')) {
+        const parts = nodeId.split('-repo-');
+        const teamKey = parts[0];
+        const repoName = parts[1];
+        
+        const teamPRs = filteredTeamPullRequests[teamKey] || [];
+        teamPRs.forEach(pr => {
+          if (pr.repository.full_name === repoName) {
+            const key = `${pr.repository.full_name}#${pr.number}`;
+            if (!visiblePRs.has(key)) {
+              visiblePRs.set(key, pr);
+            }
+          }
+        });
+      }
+      // For direct repositories (format: "repo-<repoName>")  
+      else if (nodeId.startsWith('repo-')) {
+        const repoName = nodeId.substring(5);
+        // Find PRs for this repository in filteredTeamPullRequests or direct repo PRs
+        Object.values(filteredTeamPullRequests).forEach(teamPRs => {
+          teamPRs.forEach(pr => {
+            if (pr.repository.full_name === repoName) {
+              const key = `${pr.repository.full_name}#${pr.number}`;
+              if (!visiblePRs.has(key)) {
+                visiblePRs.set(key, pr);
+              }
+            }
+          });
+        });
+      }
+    });
+    
+    return visiblePRs.size;
+  }, [expandedRepositoryNodes, filteredTeamPullRequests]);
 
   // Since you only use team subscriptions, no direct repository subscriptions to show
   const visibleRepositories = useMemo(() => {
@@ -1205,6 +1366,8 @@ function App() {
               <SectionTitle>Filter PRs</SectionTitle>
               <DateRangeFilter
                 pullRequests={allPRs}
+                filteredPullRequests={Object.values(filteredTeamPullRequests).flat()}
+                visiblePRCount={visiblePRNodeCount}
                 onDateChange={(startDate, endDate) => {
                   setDateFilter({ startDate, endDate });
                   // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
@@ -1214,6 +1377,8 @@ function App() {
               {/* Author Filter */}
               <AuthorFilter
                 pullRequests={allPRs}
+                filteredPullRequests={Object.values(filteredTeamPullRequests).flat()}
+                visiblePRCount={visiblePRNodeCount}
                 onAuthorsChange={(selectedAuthors) => {
                   console.log('🎯 Author filter changed:', Array.from(selectedAuthors));
                   setAuthorFilter(selectedAuthors);
@@ -1228,7 +1393,7 @@ function App() {
                   {Object.values(PRState).map(state => {
                     const isActive = statusFilter.has(state);
                     const color = PR_STATE_COLORS[state];
-                    const count = allPRs.filter(pr => pr.state === state).length;
+                    const count = statusCounts[state] || 0;
                     
                     return (
                       <StatusFilterButton
@@ -1265,7 +1430,7 @@ function App() {
                   {/* Draft Filter Toggle */}
                   <StatusFilterButton
                     $active={includeDrafts}
-                    $stateColor="#6f42c1"
+                    $stateColor="#6b7280"
                     onClick={() => {
                       console.log(`🎯 Clicked drafts filter button, currently active: ${includeDrafts}`);
                       setIncludeDrafts(!includeDrafts);
@@ -1273,9 +1438,35 @@ function App() {
                       // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
                     }}
                   >
-                    drafts ({allPRs.filter(pr => pr.state === PRState.OPEN && pr.draft).length})
+                    drafts ({statusCounts.drafts || 0})
+                  </StatusFilterButton>
+                  
+                  {/* Needs Review Filter Button */}
+                  <StatusFilterButton
+                    $active={prStatusFilter.has('needs_review')}
+                    $stateColor="#f1c21b"
+                    onClick={() => {
+                      console.log('🎯 Clicked needs review filter button');
+                      setPrStatusFilter(prev => {
+                        const newSet = new Set(prev);
+                        if (newSet.has('needs_review')) {
+                          newSet.delete('needs_review');
+                          console.log('🎯 Removed needs_review from filter');
+                        } else {
+                          newSet.add('needs_review');
+                          console.log('🎯 Added needs_review to filter');
+                        }
+                        console.log('🎯 New PR status filter set:', Array.from(newSet));
+                        return newSet;
+                      });
+                    }}
+                  >
+                    needs review ({statusCounts.needs_review || 0})
                   </StatusFilterButton>
                 </StatusFilterButtons>
+                <PRCount>
+                  Showing <strong>{visiblePRNodeCount}</strong> of <strong>{allPRs.length}</strong> PRs
+                </PRCount>
               </StatusFilterContainer>
             </>
           )}
@@ -1352,7 +1543,7 @@ function App() {
                 </EmptyState>
               ) : visibleRepositories.length > 0 || teamsWithFilteredCounts.length > 0 ? (
                 <ReactFlowMindMap
-                  key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}-${Array.from(statusFilter).sort().join(',')}-${includeDrafts}-${Array.from(authorFilter).sort().join(',')}`}
+                  key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}-${Array.from(statusFilter).sort().join(',')}-${includeDrafts}-${Array.from(prStatusFilter).sort().join(',')}-${Array.from(authorFilter).sort().join(',')}`}
                   repositories={visibleRepositories}
                   teams={teamsWithFilteredCounts}
                   onRepositoryClick={handleRepositoryClick}

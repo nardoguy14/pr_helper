@@ -4,6 +4,8 @@ import { Calendar } from 'lucide-react';
 
 interface DateRangeFilterProps {
   pullRequests: Array<{ created_at: string }>;
+  filteredPullRequests?: Array<{ created_at: string }>;
+  visiblePRCount?: number;
   onDateChange: (startDate: Date | null, endDate: Date | null) => void;
 }
 
@@ -132,6 +134,8 @@ const PRCount = styled.div`
 
 export const DateRangeFilter: React.FC<DateRangeFilterProps> = ({ 
   pullRequests, 
+  filteredPullRequests,
+  visiblePRCount,
   onDateChange 
 }) => {
   // Calculate default dates (last week)
@@ -177,15 +181,18 @@ export const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
     };
   }, [pullRequests]);
 
-  // Count PRs that would be visible (within the date range)
-  const visiblePRCount = useMemo(() => {
-    if (!pullRequests) return 0;
+  // Use provided visible count or calculate based on date range
+  const displayCount = useMemo(() => {
+    if (visiblePRCount !== undefined) {
+      return visiblePRCount;
+    }
     
+    // Fallback: count PRs in date range
     return pullRequests.filter(pr => {
       const prDate = new Date(pr.created_at);
       return prDate >= startDate && prDate <= endDate;
     }).length;
-  }, [pullRequests, startDate, endDate]);
+  }, [visiblePRCount, pullRequests, startDate, endDate]);
 
 
   // Format date for input value
@@ -321,7 +328,17 @@ export const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
       </DateInputContainer>
 
       <PRCount>
-        Showing <strong>{visiblePRCount}</strong> of <strong>{pullRequests.length}</strong> PRs
+        Showing <strong>{displayCount}</strong> of <strong>{(() => {
+          // Count unique PRs in the total
+          const uniquePRs = new Map();
+          pullRequests.forEach((pr: any) => {
+            const key = `${pr.repository?.full_name || 'unknown'}#${pr.number || pr.created_at}`;
+            if (!uniquePRs.has(key)) {
+              uniquePRs.set(key, pr);
+            }
+          });
+          return uniquePRs.size;
+        })()}</strong> PRs
       </PRCount>
     </FilterContainer>
   );

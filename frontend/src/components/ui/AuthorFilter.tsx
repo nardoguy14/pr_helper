@@ -5,6 +5,8 @@ import { User, PullRequest } from '../../types';
 
 interface AuthorFilterProps {
   pullRequests: PullRequest[];
+  filteredPullRequests?: PullRequest[];
+  visiblePRCount?: number;
   onAuthorsChange: (selectedAuthors: Set<string>) => void;
 }
 
@@ -167,6 +169,8 @@ const FilterSummary = styled.div`
 
 export const AuthorFilter: React.FC<AuthorFilterProps> = ({ 
   pullRequests, 
+  filteredPullRequests,
+  visiblePRCount,
   onAuthorsChange 
 }) => {
   const [selectedAuthors, setSelectedAuthors] = useState<Set<string>>(new Set());
@@ -174,9 +178,19 @@ export const AuthorFilter: React.FC<AuthorFilterProps> = ({
 
   // Extract unique authors with PR counts
   const authors = useMemo(() => {
+    // First deduplicate PRs
+    const uniquePRs = new Map();
+    pullRequests.forEach(pr => {
+      const key = `${pr.repository?.full_name || 'unknown'}#${pr.number || pr.id}`;
+      if (!uniquePRs.has(key)) {
+        uniquePRs.set(key, pr);
+      }
+    });
+    
+    // Then count authors from unique PRs
     const authorMap = new Map<string, { user: User; prCount: number }>();
     
-    pullRequests.forEach(pr => {
+    Array.from(uniquePRs.values()).forEach(pr => {
       if (pr.user) {
         const login = pr.user.login;
         if (authorMap.has(login)) {
@@ -234,14 +248,27 @@ export const AuthorFilter: React.FC<AuthorFilterProps> = ({
     onAuthorsChange(topSet);
   };
 
-  // Count visible PRs based on selected authors
-  const visiblePRCount = useMemo(() => {
-    if (selectedAuthors.size === 0) return pullRequests.length; // No filter = show all
+  // Use provided visible count or calculate based on filtered PRs
+  const displayCount = useMemo(() => {
+    if (visiblePRCount !== undefined) {
+      return visiblePRCount;
+    }
     
-    return pullRequests.filter(pr => 
-      pr.user && selectedAuthors.has(pr.user.login)
-    ).length;
-  }, [pullRequests, selectedAuthors]);
+    // Fallback: count unique filtered PRs
+    const prsToCount = filteredPullRequests || pullRequests;
+    if (!prsToCount) return 0;
+    
+    // Deduplicate by repository + PR number
+    const uniquePRs = new Map();
+    prsToCount.forEach(pr => {
+      const key = `${pr.repository?.full_name || 'unknown'}#${pr.number || pr.id}`;
+      if (!uniquePRs.has(key)) {
+        uniquePRs.set(key, pr);
+      }
+    });
+    
+    return uniquePRs.size;
+  }, [visiblePRCount, filteredPullRequests, pullRequests]);
 
   if (!pullRequests || pullRequests.length === 0) {
     return null;
@@ -318,7 +345,17 @@ export const AuthorFilter: React.FC<AuthorFilterProps> = ({
       </AuthorGrid>
 
       <FilterSummary>
-        Showing <strong>{visiblePRCount}</strong> of <strong>{pullRequests.length}</strong> PRs
+        Showing <strong>{displayCount}</strong> of <strong>{(() => {
+          // Count unique PRs in the total
+          const uniquePRs = new Map();
+          pullRequests.forEach(pr => {
+            const key = `${pr.repository?.full_name || 'unknown'}#${pr.number || pr.id}`;
+            if (!uniquePRs.has(key)) {
+              uniquePRs.set(key, pr);
+            }
+          });
+          return uniquePRs.size;
+        })()}</strong> PRs
         {selectedAuthors.size > 0 && (
           <> from <strong>{selectedAuthors.size}</strong> author{selectedAuthors.size !== 1 ? 's' : ''}</>
         )}
