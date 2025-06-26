@@ -202,11 +202,12 @@ class GitHubGraphQLServiceV2:
         
         # Build search query - include all PR states but limit to recent activity
         # Sort by updated to get most recently active PRs first
-        # Include PRs updated in the last 6 months to avoid too much old data
+        # Include PRs updated in the last 2 weeks to avoid too much old data
+        # Explicitly include merged PRs by using is:merged OR is:open OR is:closed
         from datetime import datetime, timedelta
-        six_months_ago = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+        two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
         author_query = " ".join([f"author:{author}" for author in authors])
-        search_query = f"org:{organization} type:pr {author_query} updated:>={six_months_ago} sort:updated"
+        search_query = f"org:{organization} type:pr {author_query} updated:>={two_weeks_ago} sort:updated"
         logger.info(f"GraphQL search query: {search_query}")
         
         query = """
@@ -323,6 +324,12 @@ class GitHubGraphQLServiceV2:
             logger.info(f"GraphQL search returned {len(pr_nodes)} PR nodes")
             
             for pr_data in pr_nodes:
+                # Log PR details to debug why merged PRs might not show
+                pr_number = pr_data.get("number", "unknown")
+                pr_state = pr_data.get("state", "unknown")
+                pr_repo = pr_data.get("repository", {}).get("name", "unknown")
+                logger.info(f"Processing PR #{pr_number} in {pr_repo}: state={pr_state}")
+                
                 pr = self._convert_graphql_pr(pr_data)
                 all_prs.append(pr)
             
@@ -337,6 +344,9 @@ class GitHubGraphQLServiceV2:
     def _determine_pr_state(self, pr_data: Dict[str, Any]) -> str:
         """Determine PR state from GraphQL data"""
         github_state = pr_data.get("state", "OPEN")
+        
+        # Log the state we're getting from GitHub
+        logger.info(f"PR #{pr_data.get('number', 'unknown')}: GitHub state = {github_state}")
         
         # Convert GitHub GraphQL state to our enum values
         if github_state == "MERGED":

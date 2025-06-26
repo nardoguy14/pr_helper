@@ -526,26 +526,28 @@ class DatabaseService:
         
         await self.db.commit()
     
-    async def get_repository_pull_requests(self, repository_name: str) -> List[dict]:
-        """Get all open pull requests for a repository"""
-        result = await self.db.execute(
-            select(DBPullRequest).where(
-                DBPullRequest.repository_name == repository_name,
-                DBPullRequest.state == 'open'
-            ).order_by(DBPullRequest.github_updated_at.desc())
-        )
+    async def get_repository_pull_requests(self, repository_name: str, state: str = None) -> List[dict]:
+        """Get pull requests for a repository, optionally filtered by state"""
+        query = select(DBPullRequest).where(DBPullRequest.repository_name == repository_name)
+        
+        if state:
+            query = query.where(DBPullRequest.state == state)
+            
+        query = query.order_by(DBPullRequest.github_updated_at.desc())
+        result = await self.db.execute(query)
         db_prs = result.scalars().all()
         
         return [json.loads(pr.pr_data) for pr in db_prs]
     
-    async def get_team_pull_requests(self, team_key: str) -> List[dict]:
-        """Get all pull requests associated with a team"""
-        result = await self.db.execute(
-            select(DBPullRequest).where(
-                DBPullRequest.associated_teams.contains(team_key),
-                DBPullRequest.state == 'open'
-            ).order_by(DBPullRequest.github_updated_at.desc())
-        )
+    async def get_team_pull_requests(self, team_key: str, state: str = None) -> List[dict]:
+        """Get pull requests associated with a team, optionally filtered by state"""
+        query = select(DBPullRequest).where(DBPullRequest.associated_teams.contains(team_key))
+        
+        if state:
+            query = query.where(DBPullRequest.state == state)
+            
+        query = query.order_by(DBPullRequest.github_updated_at.desc())
+        result = await self.db.execute(query)
         db_prs = result.scalars().all()
         
         return [json.loads(pr.pr_data) for pr in db_prs]

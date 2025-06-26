@@ -18,7 +18,7 @@ import { useTeams } from './hooks/useTeams';
 import { usePullRequests } from './hooks/usePullRequests';
 import { useAuth } from './hooks/useAuth';
 
-import { SubscribeRepositoryRequest, TeamSubscriptionRequest, PullRequest } from './types';
+import { SubscribeRepositoryRequest, TeamSubscriptionRequest, PullRequest, PRState, PR_STATE_COLORS } from './types';
 
 const GlobalStyle = createGlobalStyle`
   * {
@@ -234,6 +234,59 @@ const NotificationsList = styled.div`
   overflow-y: auto;
 `;
 
+const StatusFilterContainer = styled.div`
+  background: white;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+`;
+
+const StatusFilterTitle = styled.h4`
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #24292e;
+`;
+
+const StatusFilterButtons = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+`;
+
+const StatusFilterButton = styled.button<{ $active: boolean; $stateColor: string }>`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid ${props => props.$active ? props.$stateColor : '#d0d7de'};
+  background: ${props => props.$active ? props.$stateColor + '15' : 'white'};
+  color: ${props => props.$active ? props.$stateColor : '#656d76'};
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  pointer-events: auto;
+  z-index: 10;
+  position: relative;
+  
+  &:hover {
+    border-color: ${props => props.$stateColor};
+    background: ${props => props.$stateColor + '10'};
+    color: ${props => props.$stateColor};
+  }
+  
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: ${props => props.$active ? props.$stateColor : '#d0d7de'};
+  }
+`;
+
 const UserMenuButton = styled.button`
   display: flex;
   align-items: center;
@@ -384,6 +437,11 @@ function App() {
   };
   
   const [dateFilter, setDateFilter] = useState<{ startDate: Date | null; endDate: Date | null }>(getDefaultDateRange());
+  // Status filter state - default to show only open PRs (draft PRs have state=open)
+  const [statusFilter, setStatusFilter] = useState<Set<PRState>>(new Set([PRState.OPEN]));
+  // Separate filter for draft status - default to include drafts
+  const [includeDrafts, setIncludeDrafts] = useState(true);
+  
   const notificationsRef = useRef<HTMLButtonElement>(null);
 
   // Authentication hook
@@ -860,68 +918,65 @@ function App() {
     return [...repoPRs, ...teamPRs];
   }, [allPullRequests, allTeamPullRequests]);
 
-  // Filter PRs based on date filter
+  // For direct repository subscriptions (currently unused since you only have team subscriptions)
   const filteredPullRequests = useMemo(() => {
-    if (!dateFilter.startDate && !dateFilter.endDate) return allPullRequests;
-    
-    const filtered: Record<string, PullRequest[]> = {};
-    Object.entries(allPullRequests).forEach(([repo, prs]) => {
-      const filteredPRs = prs.filter(pr => {
-        const prDate = new Date(pr.created_at);
-        const afterStart = !dateFilter.startDate || prDate >= dateFilter.startDate;
-        const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
-        return afterStart && beforeEnd;
-      });
-      // Only include repos that have PRs in the date range
-      if (filteredPRs.length > 0) {
-        filtered[repo] = filteredPRs;
-      }
-    });
-    return filtered;
-  }, [allPullRequests, dateFilter]);
+    // Since you only use team subscriptions, just return empty object
+    return {};
+  }, []);
 
-  // Filter team PRs based on date filter
+  // Filter team PRs based on date and status filters
   const filteredTeamPullRequests = useMemo(() => {
-    if (!dateFilter.startDate && !dateFilter.endDate) return allTeamPullRequests;
+    console.log('🧮 Computing filteredTeamPullRequests with filters:', {
+      statusFilter: Array.from(statusFilter),
+      includeDrafts,
+      totalTeamPRsCount: Object.values(allTeamPullRequests).flat().length
+    });
     
     const filtered: Record<string, any[]> = {};
     Object.entries(allTeamPullRequests).forEach(([team, prs]) => {
-      const filteredPRs = prs.filter(pr => {
+      // First deduplicate PRs by repository + PR number to prevent duplicate React keys
+      const uniquePRs = prs.filter((pr, index, array) => {
+        const firstIndex = array.findIndex(p => 
+          p.repository.full_name === pr.repository.full_name && 
+          p.number === pr.number
+        );
+        if (firstIndex !== index) {
+          console.log(`🔄 Removing duplicate PR: ${pr.repository.full_name}#${pr.number} (keeping first occurrence)`);
+        }
+        return firstIndex === index;
+      });
+      
+      const filteredPRs = uniquePRs.filter(pr => {
+        // Date filter
         const prDate = new Date(pr.created_at);
         const afterStart = !dateFilter.startDate || prDate >= dateFilter.startDate;
         const beforeEnd = !dateFilter.endDate || prDate <= dateFilter.endDate;
-        return afterStart && beforeEnd;
+        const passesDateFilter = afterStart && beforeEnd;
+        
+        // Status filter
+        const passesStatusFilter = statusFilter.has(pr.state);
+        
+        // Draft filter (only applies to open PRs)
+        const passesDraftFilter = pr.state !== PRState.OPEN || includeDrafts || !pr.draft;
+        
+        return passesDateFilter && passesStatusFilter && passesDraftFilter;
       });
-      // Only include teams that have PRs in the date range
-      if (filteredPRs.length > 0) {
-        filtered[team] = filteredPRs;
-      }
+      // Always include the team, even if no PRs pass the filters (empty array)
+      filtered[team] = filteredPRs;
     });
+    
+    console.log('🧮 Filtered team result:', {
+      teamsWithPRs: Object.keys(filtered).length,
+      totalFilteredTeamPRs: Object.values(filtered).flat().length
+    });
+    
     return filtered;
-  }, [allTeamPullRequests, dateFilter]);
+  }, [allTeamPullRequests, dateFilter, statusFilter, includeDrafts]);
 
-  // Filter repositories to only show those with visible PRs and update their counts
+  // Since you only use team subscriptions, no direct repository subscriptions to show
   const visibleRepositories = useMemo(() => {
-    return repositories
-      .map(repo => {
-        const repoPRs = filteredPullRequests[repo.repository.full_name] || [];
-        if (repoPRs.length === 0) return null;
-        
-        // Calculate filtered stats
-        const filteredStats = {
-          total_open_prs: repoPRs.length,
-          assigned_to_user: repoPRs.filter(pr => pr.user_is_assigned).length,
-          review_requests: repoPRs.filter(pr => pr.user_is_requested_reviewer).length,
-          code_owner_prs: 0, // Maintain the property for compatibility
-        };
-        
-        return {
-          ...repo,
-          ...filteredStats
-        };
-      })
-      .filter((repo): repo is NonNullable<typeof repo> => repo !== null);
-  }, [repositories, filteredPullRequests]);
+    return [];
+  }, []);
 
   // Create teams with filtered PR counts based on date filter
   const teamsWithFilteredCounts = useMemo(() => {
@@ -934,11 +989,11 @@ function App() {
       const teamKey = `${team.organization}/${team.team_name}`;
       const teamPRs = filteredTeamPullRequests[teamKey];
       
-      // console.log(`Team ${teamKey}: original count=${team.total_open_prs}, has fetched PRs=${!!teamPRs}, fetched count=${teamPRs?.length || 0}`);
+      console.log(`Team ${teamKey}: original count=${team.total_open_prs}, has fetched PRs=${!!teamPRs}, filtered count=${teamPRs?.length || 0}`);
       
-      // If we have fetched PRs for this team, use the filtered count
+      // If we have fetched PRs for this team, use the filtered count (even if 0)
       // Otherwise, return the team with a flag indicating we need to fetch PRs
-      if (teamPRs) {
+      if (teamPRs !== undefined) {
         const filteredStats = {
           total_open_prs: teamPRs.length,
           assigned_to_user: teamPRs.filter((pr: any) => pr.user_is_assigned).length,
@@ -1151,6 +1206,75 @@ function App() {
                   }
                 }}
               />
+              
+              {/* Status Filter */}
+              <StatusFilterContainer>
+                <StatusFilterTitle>PR Status</StatusFilterTitle>
+                <StatusFilterButtons>
+                  {Object.values(PRState).map(state => {
+                    const isActive = statusFilter.has(state);
+                    const color = PR_STATE_COLORS[state];
+                    const count = allPRs.filter(pr => pr.state === state).length;
+                    
+                    return (
+                      <StatusFilterButton
+                        key={state}
+                        $active={isActive}
+                        $stateColor={color}
+                        onMouseDown={() => console.log(`🔥 MOUSE DOWN on ${state} button`)}
+                        onMouseUp={() => console.log(`🔥 MOUSE UP on ${state} button`)}
+                        onClick={(e) => {
+                          console.log(`🔥 CLICK EVENT on ${state} button`, e);
+                          console.log(`🎯 Clicked ${state} filter button, currently active: ${isActive}`);
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setStatusFilter(prev => {
+                            const newSet = new Set(prev);
+                            if (newSet.has(state)) {
+                              newSet.delete(state);
+                              console.log(`🎯 Removed ${state} from filter`);
+                            } else {
+                              newSet.add(state);
+                              console.log(`🎯 Added ${state} to filter`);
+                            }
+                            console.log(`🎯 New filter set:`, Array.from(newSet));
+                            return newSet;
+                          });
+                          // Reset expanded states to redraw the whole graph
+                          setExpandedTeams(new Set());
+                          setExpandedRepositoryNodes(new Set());
+                          // Clear all expanded repositories
+                          if (expandedRepositories.size > 0) {
+                            clearAllPullRequests();
+                          }
+                        }}
+                      >
+                        {state} ({count})
+                      </StatusFilterButton>
+                    );
+                  })}
+                  
+                  {/* Draft Filter Toggle */}
+                  <StatusFilterButton
+                    $active={includeDrafts}
+                    $stateColor="#6f42c1"
+                    onClick={() => {
+                      console.log(`🎯 Clicked drafts filter button, currently active: ${includeDrafts}`);
+                      setIncludeDrafts(!includeDrafts);
+                      console.log(`🎯 Set includeDrafts to: ${!includeDrafts}`);
+                      // Reset expanded states to redraw the whole graph
+                      setExpandedTeams(new Set());
+                      setExpandedRepositoryNodes(new Set());
+                      // Clear all expanded repositories
+                      if (expandedRepositories.size > 0) {
+                        clearAllPullRequests();
+                      }
+                    }}
+                  >
+                    drafts ({allPRs.filter(pr => pr.state === PRState.OPEN && pr.draft).length})
+                  </StatusFilterButton>
+                </StatusFilterButtons>
+              </StatusFilterContainer>
             </>
           )}
           
@@ -1226,7 +1350,7 @@ function App() {
                 </EmptyState>
               ) : visibleRepositories.length > 0 || teamsWithFilteredCounts.length > 0 ? (
                 <ReactFlowMindMap
-                  key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}`}
+                  key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}-${Array.from(statusFilter).sort().join(',')}-${includeDrafts}`}
                   repositories={visibleRepositories}
                   teams={teamsWithFilteredCounts}
                   onRepositoryClick={handleRepositoryClick}
@@ -1255,7 +1379,7 @@ function App() {
             ) : (
               expandedRepositories.size > 0 && (
                 <PRDirectedGraph
-                  pullRequests={Object.values(filteredPullRequests).flat()}
+                  pullRequests={Object.values(filteredTeamPullRequests).flat()}
                   repositoryName={Array.from(expandedRepositories)[0]}
                   onPRClick={handlePRClick}
                 />
