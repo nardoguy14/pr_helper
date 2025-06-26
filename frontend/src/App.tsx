@@ -1207,13 +1207,7 @@ function App() {
                 pullRequests={allPRs}
                 onDateChange={(startDate, endDate) => {
                   setDateFilter({ startDate, endDate });
-                  // Reset expanded states to redraw the whole graph
-                  setExpandedTeams(new Set());
-                  setExpandedRepositoryNodes(new Set());
-                  // Clear all expanded repositories
-                  if (expandedRepositories.size > 0) {
-                    clearAllPullRequests();
-                  }
+                  // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
                 }}
               />
               
@@ -1223,13 +1217,7 @@ function App() {
                 onAuthorsChange={(selectedAuthors) => {
                   console.log('🎯 Author filter changed:', Array.from(selectedAuthors));
                   setAuthorFilter(selectedAuthors);
-                  // Reset expanded states to redraw the whole graph
-                  setExpandedTeams(new Set());
-                  setExpandedRepositoryNodes(new Set());
-                  // Clear all expanded repositories
-                  if (expandedRepositories.size > 0) {
-                    clearAllPullRequests();
-                  }
+                  // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
                 }}
               />
               
@@ -1266,13 +1254,7 @@ function App() {
                             console.log(`🎯 New filter set:`, Array.from(newSet));
                             return newSet;
                           });
-                          // Reset expanded states to redraw the whole graph
-                          setExpandedTeams(new Set());
-                          setExpandedRepositoryNodes(new Set());
-                          // Clear all expanded repositories
-                          if (expandedRepositories.size > 0) {
-                            clearAllPullRequests();
-                          }
+                          // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
                         }}
                       >
                         {state} ({count})
@@ -1288,13 +1270,7 @@ function App() {
                       console.log(`🎯 Clicked drafts filter button, currently active: ${includeDrafts}`);
                       setIncludeDrafts(!includeDrafts);
                       console.log(`🎯 Set includeDrafts to: ${!includeDrafts}`);
-                      // Reset expanded states to redraw the whole graph
-                      setExpandedTeams(new Set());
-                      setExpandedRepositoryNodes(new Set());
-                      // Clear all expanded repositories
-                      if (expandedRepositories.size > 0) {
-                        clearAllPullRequests();
-                      }
+                      // Let ReactFlowMindMap handle intelligent updates - don't reset expanded states
                     }}
                   >
                     drafts ({allPRs.filter(pr => pr.state === PRState.OPEN && pr.draft).length})

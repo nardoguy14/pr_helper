@@ -687,12 +687,32 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
           prs = allPullRequests[repositoryName] || [];
         }
         
-        if (prs.length === 0) return;
-        
-        // Check if this specific repo node already has PR nodes
+        // Get the node prefix for this repository
         const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
-        const hasPRNodes = currentNodes.some(node => node.id.startsWith(`${nodePrefix}-pr-`));
-        if (hasPRNodes) return; // Already have PR nodes for this specific repo node
+        
+        // Find existing PR nodes for this repository
+        const existingPRNodes = currentNodes.filter(node => node.id.startsWith(`${nodePrefix}-pr-`));
+        const existingPRNumbers = existingPRNodes.map(node => {
+          const match = node.id.match(/-pr-(\d+)$/);
+          return match ? parseInt(match[1]) : null;
+        }).filter(n => n !== null);
+        
+        // Find current PR numbers after filtering
+        const currentPRNumbers = prs.map((pr: any) => pr.number);
+        
+        // Determine which PR nodes to add and remove
+        const prsToAdd = prs.filter((pr: any) => !existingPRNumbers.includes(pr.number));
+        const prNodesToRemove = existingPRNodes.filter(node => {
+          const match = node.id.match(/-pr-(\d+)$/);
+          const prNumber = match ? parseInt(match[1]) : null;
+          return prNumber && !currentPRNumbers.includes(prNumber);
+        });
+        
+        // Add PR node IDs to remove list
+        prNodesToRemove.forEach(node => nodesToRemove.push(node.id));
+        
+        // Skip if no PRs to add and we already processed removals
+        if (prsToAdd.length === 0) return;
 
         // Find the team node this repo belongs to
         const teamNodeId = repoNode.id.split('-repo-')[0];
@@ -706,20 +726,27 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             baseAngle = Math.atan2(dy, dx);
           }
 
-          // Dynamic radius based on number of PRs - more compact for fewer PRs
-          const basePRRadius = Math.min(200, 120 + (prs.length * 15));
+          // Calculate positioning based on ALL current PRs (existing + new) for proper spacing
+          const allCurrentPRs = prs; // This is the full filtered list
+          const totalPRCount = allCurrentPRs.length;
+          
+          // Dynamic radius based on total number of PRs
+          const basePRRadius = Math.min(200, 120 + (totalPRCount * 15));
           const prRadius = basePRRadius;
           
-          // Calculate optimal spread for PRs
+          // Calculate optimal spread for ALL PRs
           const minAnglePerPR = Math.PI / 12; // 15 degrees minimum per PR
-          const desiredPRSpread = minAnglePerPR * prs.length;
-          const maxSpread = Math.PI * 0.8; // 144 degrees max spread (increased from 108)
+          const desiredPRSpread = minAnglePerPR * totalPRCount;
+          const maxSpread = Math.PI * 0.8; // 144 degrees max spread
           const spreadAngle = Math.min(desiredPRSpread, maxSpread);
           const startAngle = baseAngle - spreadAngle / 2;
           
-          const newPRNodes = prs.map((pr, prIndex) => {
-            const angleStep = prs.length > 1 ? spreadAngle / (prs.length - 1) : 0;
-            const prAngle = startAngle + (prIndex * angleStep);
+          // Only create nodes for PRs that need to be added
+          const newPRNodes = prsToAdd.map((pr, addIndex) => {
+            // Find the position this PR should have in the full sorted list
+            const prIndexInFullList = allCurrentPRs.findIndex((p: any) => p.number === pr.number);
+            const angleStep = totalPRCount > 1 ? spreadAngle / (totalPRCount - 1) : 0;
+            const prAngle = startAngle + (prIndexInFullList * angleStep);
             const prX = repoNode.position.x + Math.cos(prAngle) * prRadius;
             const prY = repoNode.position.y + Math.sin(prAngle) * prRadius;
 
@@ -737,7 +764,7 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
             };
           });
 
-          console.log('Adding PR nodes for repository node:', repoNode.id, newPRNodes.length, 'PRs');
+          console.log(`🎯 Repository ${repoNode.id}: Adding ${newPRNodes.length} PR nodes, Removing ${prNodesToRemove.length} PR nodes`);
           nodesToAdd.push(...newPRNodes);
       });
 
@@ -820,24 +847,45 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
               // This is a direct repository node - use direct repo PRs
               prs = allPullRequests[repositoryName] || [];
             }
-            if (prs.length === 0) return;
-              const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
-              const hasPREdges = currentEdges.some(edge => edge.source === repoNode.id && edge.id.includes('-pr-'));
-              if (hasPREdges) return;
-              
-              const newPREdges = prs.map(pr => ({
-                id: `edge-${nodePrefix}-pr-${pr.number}`,
-                source: repoNode.id,
-                target: `${nodePrefix}-pr-${pr.number}`,
-                type: 'straight',
-                animated: true,
-                style: {
-                  stroke: '#0366d6',
-                  strokeWidth: 2,
-                },
-              }));
+            const nodePrefix = repoNode.id.includes('-repo-') ? repoNode.id : repositoryName;
+            
+            // Find existing PR edges for this repository
+            const existingPREdges = currentEdges.filter(edge => 
+              edge.source === repoNode.id && edge.id.includes('-pr-')
+            );
+            const existingPRNumbers = existingPREdges.map(edge => {
+              const match = edge.id.match(/-pr-(\d+)$/);
+              return match ? parseInt(match[1]) : null;
+            }).filter(n => n !== null);
+            
+            // Find current PR numbers after filtering
+            const currentPRNumbers = prs.map((pr: any) => pr.number);
+            
+            // Determine which edges to add and remove
+            const prsToAddEdges = prs.filter((pr: any) => !existingPRNumbers.includes(pr.number));
+            const edgesToRemoveForRepo = existingPREdges.filter(edge => {
+              const match = edge.id.match(/-pr-(\d+)$/);
+              const prNumber = match ? parseInt(match[1]) : null;
+              return prNumber && !currentPRNumbers.includes(prNumber);
+            });
+            
+            // Add edge IDs to remove list
+            edgesToRemoveForRepo.forEach(edge => edgesToRemove.push(edge.id));
+            
+            // Create edges for new PRs only
+            const newPREdges = prsToAddEdges.map(pr => ({
+              id: `edge-${nodePrefix}-pr-${pr.number}`,
+              source: repoNode.id,
+              target: `${nodePrefix}-pr-${pr.number}`,
+              type: 'straight',
+              animated: true,
+              style: {
+                stroke: '#0366d6',
+                strokeWidth: 2,
+              },
+            }));
 
-              edgesToAdd.push(...newPREdges);
+            edgesToAdd.push(...newPREdges);
           });
 
           // Remove edges for collapsed repositories
