@@ -39,6 +39,76 @@ async def health_check():
     }
 
 
+# Test endpoint for creating fake needs review PRs
+@router.post("/test/create-needs-review-pr")
+async def create_fake_needs_review_pr():
+    """Create a fake PR with needs_review status for testing notifications"""
+    try:
+        # Create a fake PR that needs review
+        fake_pr = {
+            "id": 999999999,
+            "number": 9999,
+            "title": "🧪 TEST: Fake PR that needs review",
+            "body": "This is a test PR created for testing the needs review notification logic.",
+            "state": "open",
+            "html_url": "https://github.com/test/repo/pull/9999",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "closed_at": None,
+            "merged_at": None,
+            "user": {
+                "id": 12345,
+                "login": "test-author",
+                "avatar_url": "https://avatars.githubusercontent.com/u/12345?v=4",
+                "html_url": "https://github.com/test-author"
+            },
+            "assignees": [],
+            "requested_reviewers": [
+                {
+                    "id": 67890,
+                    "login": "test-reviewer",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/67890?v=4",
+                    "html_url": "https://github.com/test-reviewer"
+                }
+            ],
+            "requested_teams": [],
+            "reviews": [],
+            "repository": {
+                "id": 555555,
+                "name": "test-repo",
+                "full_name": "test-org/test-repo",
+                "html_url": "https://github.com/test-org/test-repo",
+                "description": "Test repository for PR notifications",
+                "private": False
+            },
+            "draft": False,
+            "mergeable": True,
+            "status": "needs_review",  # This is the key field for testing
+            "user_has_reviewed": False,
+            "user_is_assigned": False,
+            "user_is_requested_reviewer": True
+        }
+        
+        # Send WebSocket notification to simulate real PR update
+        await websocket_manager.send_pr_update(
+            repository_name="test-org/test-repo",
+            pr_data=fake_pr,
+            update_type="new_pr"
+        )
+        
+        logger.info("Created fake needs review PR for testing")
+        
+        return {
+            "success": True,
+            "message": "Fake needs review PR created and broadcasted",
+            "pr": fake_pr
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to create fake needs review PR: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create test PR: {str(e)}")
+
+
 # Authentication endpoints
 @router.post("/auth/token")
 async def set_github_token(request: dict):
