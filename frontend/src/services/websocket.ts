@@ -8,6 +8,8 @@ export type WebSocketEventType =
   | 'connection_established'
   | 'pr_update' 
   | 'repository_stats_update'
+  | 'team_pr_update'
+  | 'team_stats_update'
   | 'error'
   | 'disconnect';
 
@@ -15,6 +17,8 @@ export interface WebSocketEventHandlers {
   onConnectionEstablished?: () => void;
   onPRUpdate?: (data: PRUpdateMessage['data']) => void;
   onRepositoryStatsUpdate?: (data: RepositoryStatsUpdateMessage['data']) => void;
+  onTeamPRUpdate?: (data: any) => void;
+  onTeamStatsUpdate?: (data: any) => void;
   onError?: (error: string) => void;
   onDisconnect?: () => void;
 }
@@ -157,6 +161,14 @@ class WebSocketService {
       case 'repository_stats_update':
         const statsUpdateData = message as RepositoryStatsUpdateMessage;
         this.eventHandlers.onRepositoryStatsUpdate?.(statsUpdateData.data);
+        break;
+        
+      case 'team_pr_update':
+        this.eventHandlers.onTeamPRUpdate?.(message.data);
+        break;
+        
+      case 'team_stats_update':
+        this.eventHandlers.onTeamStatsUpdate?.(message.data);
         break;
         
       case 'error':

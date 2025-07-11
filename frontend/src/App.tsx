@@ -600,7 +600,58 @@ function App() {
       const { repository, stats } = data;
       updateRepositoryStats(repository, stats);
     }, [updateRepositoryStats]),
-    isAuthenticated
+    
+    isAuthenticated,
+    
+    // Handle team PR updates
+    useCallback(async (data: any) => {
+      const { team, update_type, pull_request } = data;
+      console.log('🔔 Received team PR update:', { team, update_type, pr: pull_request.number });
+      
+      // Always show notifications for team PRs that need review
+      if (pull_request.status === 'needs_review' && 
+          (pull_request.user_is_requested_reviewer || 
+           pull_request.user_is_assigned ||
+           !pull_request.user_has_reviewed)) {
+        console.log('📢 Showing notification for team PR that needs review');
+        const { NotificationService } = await import('./services/notifications');
+        await NotificationService.notifyPRUpdate(pull_request, update_type);
+      }
+      
+      // Update team PR data if we're tracking this team
+      const teamKey = team;
+      if (allTeamPullRequests[teamKey]) {
+        const existingPRs = allTeamPullRequests[teamKey];
+        const prIndex = existingPRs.findIndex((pr: any) => pr.id === pull_request.id);
+        
+        if (update_type === 'closed') {
+          // Remove closed PRs
+          if (prIndex >= 0) {
+            const newPRs = [...existingPRs];
+            newPRs.splice(prIndex, 1);
+            setAllTeamPullRequests(prev => ({
+              ...prev,
+              [teamKey]: newPRs
+            }));
+          }
+        } else {
+          // Add or update PR
+          if (prIndex >= 0) {
+            const newPRs = [...existingPRs];
+            newPRs[prIndex] = pull_request;
+            setAllTeamPullRequests(prev => ({
+              ...prev,
+              [teamKey]: newPRs
+            }));
+          } else if (update_type === 'new_pr') {
+            setAllTeamPullRequests(prev => ({
+              ...prev,
+              [teamKey]: [...existingPRs, pull_request]
+            }));
+          }
+        }
+      }
+    }, [allTeamPullRequests])
   );
 
   // Track when initial data is loaded after authentication

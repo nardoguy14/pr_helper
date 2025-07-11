@@ -39,6 +39,83 @@ async def health_check():
     }
 
 
+# Test endpoint for creating fake needs review PRs from teams
+@router.post("/test/create-team-needs-review-pr")
+async def create_fake_team_needs_review_pr():
+    """Create a fake team PR with needs_review status for testing notifications"""
+    try:
+        # Create a fake PR that needs review from a team repository
+        fake_pr = {
+            "id": 888888888,
+            "number": 8888,
+            "title": "🧪 TEST: Team PR that needs your review",
+            "body": "This is a test PR from a team repository for testing the needs review notification logic.",
+            "state": "open",
+            "html_url": "https://github.com/test-team-org/team-repo/pull/8888",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "closed_at": None,
+            "merged_at": None,
+            "user": {
+                "id": 54321,
+                "login": "team-member",
+                "avatar_url": "https://avatars.githubusercontent.com/u/54321?v=4",
+                "html_url": "https://github.com/team-member"
+            },
+            "assignees": [],
+            "requested_reviewers": [
+                {
+                    "id": 11111,
+                    "login": "current-user",  # This would be the actual user
+                    "avatar_url": "https://avatars.githubusercontent.com/u/11111?v=4",
+                    "html_url": "https://github.com/current-user"
+                }
+            ],
+            "requested_teams": [],
+            "reviews": [],
+            "repository": {
+                "id": 666666,
+                "name": "team-repo",
+                "full_name": "test-team-org/team-repo",
+                "html_url": "https://github.com/test-team-org/team-repo",
+                "description": "Team repository with important code",
+                "private": False
+            },
+            "draft": False,
+            "mergeable": True,
+            "status": "needs_review",  # This is the key field for testing
+            "user_has_reviewed": False,
+            "user_is_assigned": False,
+            "user_is_requested_reviewer": True  # User is requested to review
+        }
+        
+        # Send WebSocket notification to all connected users for testing
+        # This simulates a team PR update
+        message = {
+            "type": "team_pr_update",
+            "data": {
+                "team": "test-org/test-team",  # Team identifier
+                "update_type": "new_pr",
+                "pull_request": fake_pr
+            }
+        }
+        from app.models.pr_models import WebSocketMessage
+        ws_message = WebSocketMessage(**message)
+        await websocket_manager.broadcast_to_all(ws_message)
+        
+        logger.info("Created fake team needs review PR for testing")
+        
+        return {
+            "success": True,
+            "message": "Fake team needs review PR created and broadcasted",
+            "pr": fake_pr
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to create fake team needs review PR: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create test team PR: {str(e)}")
+
+
 # Test endpoint for creating fake needs review PRs
 @router.post("/test/create-needs-review-pr")
 async def create_fake_needs_review_pr():
@@ -89,12 +166,19 @@ async def create_fake_needs_review_pr():
             "user_is_requested_reviewer": True
         }
         
-        # Send WebSocket notification to simulate real PR update
-        await websocket_manager.send_pr_update(
-            repository_name="test-org/test-repo",
-            pr_data=fake_pr,
-            update_type="new_pr"
-        )
+        # Send WebSocket notification to all connected users for testing
+        # This bypasses the subscription check to ensure notification is received
+        message = {
+            "type": "pr_update",
+            "data": {
+                "repository": "test-org/test-repo",
+                "update_type": "new_pr",
+                "pull_request": fake_pr
+            }
+        }
+        from app.models.pr_models import WebSocketMessage
+        ws_message = WebSocketMessage(**message)
+        await websocket_manager.broadcast_to_all(ws_message)
         
         logger.info("Created fake needs review PR for testing")
         

@@ -11,7 +11,8 @@ interface UseWebSocketReturn {
 export function useWebSocket(
   onPRUpdate?: (data: any) => void,
   onRepositoryStatsUpdate?: (data: any) => void,
-  isAuthenticated: boolean = false
+  isAuthenticated: boolean = false,
+  onTeamPRUpdate?: (data: any) => void
 ): UseWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,7 @@ export function useWebSocket(
       },
       onPRUpdate: onPRUpdate,
       onRepositoryStatsUpdate: onRepositoryStatsUpdate,
+      onTeamPRUpdate: onTeamPRUpdate,
     };
 
     websocketService.setEventHandlers(handlers);
@@ -64,7 +66,7 @@ export function useWebSocket(
     return () => {
       disconnect();
     };
-  }, [connect, disconnect, onPRUpdate, onRepositoryStatsUpdate, isAuthenticated]);
+  }, [connect, disconnect, onPRUpdate, onRepositoryStatsUpdate, onTeamPRUpdate, isAuthenticated]);
 
   return {
     isConnected,
