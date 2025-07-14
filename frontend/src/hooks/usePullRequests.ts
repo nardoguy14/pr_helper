@@ -27,66 +27,14 @@ export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn
   const [error, setError] = useState<string | null>(null);
 
   const fetchPullRequestsForRepository = useCallback(async (repositoryName: string) => {
-    // Only fetch if authenticated
-    if (!isAuthenticated) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const response = await apiService.getRepositoryPullRequests(repositoryName);
-      setAllPullRequests(prev => ({
-        ...prev,
-        [repositoryName]: response.pull_requests
-      }));
-    } catch (err: any) {
-      setError(err.message);
-      console.error('Failed to fetch pull requests:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [isAuthenticated]);
+    // Repository fetching no longer supported - teams only
+    console.warn('fetchPullRequestsForRepository called but no longer supported');
+  }, []);
 
   const fetchPullRequestsForAllRepositories = useCallback(async (repositoryNames: string[]) => {
-    // Only fetch if authenticated
-    if (!isAuthenticated || repositoryNames.length === 0) {
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // Fetch PR data for all repositories in parallel
-      const promises = repositoryNames.map(async (repoName) => {
-        try {
-          const response = await apiService.getRepositoryPullRequests(repoName);
-          return { repoName, pullRequests: response.pull_requests };
-        } catch (err) {
-          console.error(`Failed to fetch PRs for ${repoName}:`, err);
-          return { repoName, pullRequests: [] };
-        }
-      });
-      
-      const results = await Promise.all(promises);
-      
-      // Update state with all results
-      setAllPullRequests(prev => {
-        const newData = { ...prev };
-        results.forEach(({ repoName, pullRequests }) => {
-          newData[repoName] = pullRequests;
-        });
-        return newData;
-      });
-    } catch (err: any) {
-      setError(err.message);
-      console.error('Failed to fetch pull requests for repositories:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [isAuthenticated]);
+    // Repository fetching no longer supported - teams only
+    console.warn('fetchPullRequestsForAllRepositories called but no longer supported');
+  }, []);
 
   const fetchUserRelevantPullRequests = useCallback(async () => {
     // Only fetch if authenticated
@@ -180,6 +128,7 @@ export function usePullRequests(isAuthenticated: boolean): UsePullRequestsReturn
     if (!isAuthenticated) return;
 
     const interval = setInterval(() => {
+      console.log('📡 Polling for user-relevant PRs...');
       fetchUserRelevantPullRequests();
     }, 30000); // Poll every 30 seconds
 

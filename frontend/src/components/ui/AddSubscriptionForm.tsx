@@ -1,10 +1,20 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
 import { Plus, X, Loader2 } from 'lucide-react';
-import { SubscribeRepositoryRequest, TeamSubscriptionRequest, SubscriptionType } from '../../types';
+import { TeamSubscriptionRequest, SubscriptionType } from '../../types';
+
+// Legacy interface for backward compatibility (repository subscriptions removed)
+interface SubscribeRepositoryRequest {
+  repository_name: string;
+  watch_all_prs?: boolean;
+  watch_assigned_prs?: boolean;
+  watch_review_requests?: boolean;
+  watch_code_owner_prs?: boolean;
+  teams?: string[];
+}
 
 interface AddSubscriptionFormProps {
-  onSubmitRepository: (request: SubscribeRepositoryRequest) => Promise<void>;
+  onSubmitRepository?: (request: SubscribeRepositoryRequest) => Promise<void>;
   onSubmitTeam: (request: TeamSubscriptionRequest) => Promise<void>;
   onCancel: () => void;
   isVisible: boolean;
@@ -206,7 +216,7 @@ export const AddSubscriptionForm: React.FC<AddSubscriptionFormProps> = ({
   onCancel,
   isVisible
 }) => {
-  const [subscriptionType, setSubscriptionType] = useState<SubscriptionType>('repository');
+  const [subscriptionType, setSubscriptionType] = useState<SubscriptionType>('team');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Repository form data
@@ -237,7 +247,7 @@ export const AddSubscriptionForm: React.FC<AddSubscriptionFormProps> = ({
     setIsSubmitting(true);
     
     try {
-      if (subscriptionType === 'repository') {
+      if (subscriptionType === 'repository' && onSubmitRepository) {
         const teams = teamsInput
           .split(',')
           .map(team => team.trim())
@@ -290,7 +300,7 @@ export const AddSubscriptionForm: React.FC<AddSubscriptionFormProps> = ({
   };
 
   const isFormValid = subscriptionType === 'repository' 
-    ? repositoryData.repository_name.trim() !== ''
+    ? (onSubmitRepository && repositoryData.repository_name.trim() !== '')
     : teamData.organization.trim() !== '' && teamData.team_name.trim() !== '';
 
   if (!isVisible) return null;
@@ -306,13 +316,7 @@ export const AddSubscriptionForm: React.FC<AddSubscriptionFormProps> = ({
         </Header>
 
         <TypeToggle>
-          <TypeButton 
-            type="button"
-            $active={subscriptionType === 'repository'}
-            onClick={() => setSubscriptionType('repository')}
-          >
-            Repository
-          </TypeButton>
+          {/* Repository subscriptions removed - teams only */}
           <TypeButton 
             type="button"
             $active={subscriptionType === 'team'}

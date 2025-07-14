@@ -130,7 +130,9 @@ class WebSocketManager:
                 "pull_request": pr_data
             }
         )
-        await self.broadcast_to_team_subscribers(team_key, message)
+        # For now, broadcast to all users since team subscription management isn't implemented
+        # TODO: Implement proper team subscription management in frontend
+        await self.broadcast_to_all(message)
     
     async def send_team_stats_update(self, organization: str, team_name: str, stats: dict):
         team_key = f"{organization}/{team_name}"

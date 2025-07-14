@@ -77,23 +77,6 @@ export interface PullRequest {
   user_is_requested_reviewer: boolean;
 }
 
-export interface RepositorySubscription {
-  repository_name: string;
-  watch_all_prs: boolean;
-  watch_assigned_prs: boolean;
-  watch_review_requests: boolean;
-  watch_code_owner_prs: boolean;
-  teams: string[];
-}
-
-export interface RepositoryStats {
-  repository: Repository;
-  total_open_prs: number;
-  assigned_to_user: number;
-  review_requests: number;
-  code_owner_prs: number;
-  last_updated: string;
-}
 
 // WebSocket Message Types
 export interface WebSocketMessage {
@@ -111,29 +94,8 @@ export interface PRUpdateMessage extends WebSocketMessage {
   };
 }
 
-export interface RepositoryStatsUpdateMessage extends WebSocketMessage {
-  type: "repository_stats_update";
-  data: {
-    repository: string;
-    stats: {
-      total_open_prs: number;
-      assigned_to_user: number;
-      review_requests: number;
-      needs_review: number;
-      last_updated: string;
-    };
-  };
-}
 
 // API Request/Response Types
-export interface SubscribeRepositoryRequest {
-  repository_name: string;
-  watch_all_prs?: boolean;
-  watch_assigned_prs?: boolean;
-  watch_review_requests?: boolean;
-  watch_code_owner_prs?: boolean;
-  teams?: string[];
-}
 
 export interface ApiResponse<T> {
   success?: boolean;
@@ -146,8 +108,8 @@ export interface ApiResponse<T> {
 // Visualization Types
 export interface NodeData {
   id: string;
-  type: "repository" | "pullRequest";
-  data: Repository | PullRequest;
+  type: "pullRequest";
+  data: PullRequest;
   x?: number;
   y?: number;
   fx?: number;
@@ -167,8 +129,6 @@ export interface GraphData {
 
 // UI State Types
 export interface AppState {
-  repositories: RepositoryStats[];
-  selectedRepository: string | null;
   pullRequests: PullRequest[];
   isConnected: boolean;
   loading: boolean;
@@ -218,12 +178,12 @@ export interface TeamSubscriptionRequest {
 }
 
 // Subscription Types
-export type SubscriptionType = 'repository' | 'team';
+export type SubscriptionType = 'repository' | 'team'; // repository inactive but kept for compatibility
 
 export interface SubscriptionItem {
   type: SubscriptionType;
-  id: string; // repo name or org/team
-  data: RepositoryStats | TeamStats;
+  id: string; // org/team
+  data: TeamStats;
 }
 
 // API Response Types for Teams

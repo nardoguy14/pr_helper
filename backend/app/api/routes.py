@@ -90,18 +90,24 @@ async def create_fake_team_needs_review_pr():
         }
         
         # Send WebSocket notification to all connected users for testing
-        # This simulates a team PR update
-        message = {
-            "type": "team_pr_update",
-            "data": {
-                "team": "test-org/test-team",  # Team identifier
+        # Debug: Check connected users and send simple message
+        connected_users = websocket_manager.get_connected_users()
+        logger.info(f"Connected WebSocket users: {connected_users}")
+        
+        if not connected_users:
+            logger.error("No WebSocket users connected!")
+            
+        from app.models.pr_models import WebSocketMessage
+        message = WebSocketMessage(
+            type="team_pr_update",
+            data={
+                "team": "test-org/test-team",
                 "update_type": "new_pr",
                 "pull_request": fake_pr
             }
-        }
-        from app.models.pr_models import WebSocketMessage
-        ws_message = WebSocketMessage(**message)
-        await websocket_manager.broadcast_to_all(ws_message)
+        )
+        logger.info(f"Broadcasting team PR update message to {len(connected_users)} users")
+        await websocket_manager.broadcast_to_all(message)
         
         logger.info("Created fake team needs review PR for testing")
         
@@ -311,101 +317,18 @@ async def clear_github_token():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/repositories/subscribe", response_model=SubscribeRepositoryResponse)
-async def subscribe_to_repository(
-    request: SubscribeRepositoryRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    try:
-        async with GitHubService() as github_service:
-            repository = await github_service.get_repository(request.repository_name)
-            if not repository:
-                raise HTTPException(
-                    status_code=404, 
-                    detail=f"Repository '{request.repository_name}' not found or not accessible"
-                )
-            
-            subscription = RepositorySubscription(
-                repository_name=request.repository_name,
-                watch_all_prs=request.watch_all_prs,
-                watch_assigned_prs=request.watch_assigned_prs,
-                watch_review_requests=request.watch_review_requests,
-                watch_code_owner_prs=request.watch_code_owner_prs,
-                teams=request.teams
-            )
-            
-            # Save to database first
-            db_service = DatabaseService(db)
-            existing = await db_service.get_repository_subscription(request.repository_name)
-            if existing:
-                # Delete existing and create new (update)
-                await db_service.delete_repository_subscription(request.repository_name)
-            
-            saved_subscription = await db_service.create_repository_subscription(subscription)
-            logger.info(f"Successfully saved repository subscription to database: {saved_subscription.repository_name}")
-            
-            # Verify it was saved by reading it back
-            verification = await db_service.get_repository_subscription(request.repository_name)
-            if verification:
-                logger.info(f"Verified repository subscription exists in database: {verification.repository_name}")
-            else:
-                logger.error(f"Failed to verify repository subscription was saved: {request.repository_name}")
-            
-            # Then add to scheduler
-            scheduler = get_scheduler()
-            scheduler.add_repository_subscription(saved_subscription)
-            
-            await scheduler.force_refresh_repository(request.repository_name)
-            
-            return SubscribeRepositoryResponse(
-                success=True,
-                message=f"Successfully subscribed to repository '{request.repository_name}'",
-                subscription=saved_subscription
-            )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error subscribing to repository {request.repository_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Repository subscription endpoints removed - teams only
 
 
-@router.post("/repositories/unsubscribe", response_model=UnsubscribeRepositoryResponse)
-async def unsubscribe_from_repository(
-    request: UnsubscribeRepositoryRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    try:
-        scheduler = get_scheduler()
-        subscribed_repos = scheduler.get_subscribed_repositories()
-        
-        if request.repository_name not in subscribed_repos:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Not subscribed to repository '{request.repository_name}'"
-            )
-        
-        # Remove from scheduler
-        scheduler.remove_repository_subscription(request.repository_name)
-        
-        # Remove from database
-        db_service = DatabaseService(db)
-        await db_service.delete_repository_subscription(request.repository_name)
-        
-        return UnsubscribeRepositoryResponse(
-            success=True,
-            message=f"Successfully unsubscribed from repository '{request.repository_name}'"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error unsubscribing from repository {request.repository_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Repository unsubscribe endpoint removed - teams only
 
 
-@router.get("/repositories", response_model=GetRepositoriesResponse)
-async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
+# Repository list endpoint removed - teams only
+# @router.get("/repositories", response_model=GetRepositoriesResponse)
+# async def get_subscribed_repositories_DISABLED(db: AsyncSession = Depends(get_db)):
+#     raise HTTPException(status_code=404, detail="Repository endpoints are disabled - teams only")
+    # Disabled function below:
+    """
     try:
         # Get repository stats from database (updated by scheduler)
         db_service = DatabaseService(db)
@@ -459,26 +382,31 @@ async def get_subscribed_repositories(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting subscribed repositories: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    """
 
 
-@router.get("/repositories/{repository_name:path}/pull-requests", response_model=GetPullRequestsResponse)
-async def get_repository_pull_requests(
-    repository_name: str,
-    db: AsyncSession = Depends(get_db)
-):
+# @router.get("/repositories/{repository_name:path}/pull-requests", response_model=GetPullRequestsResponse)
+# async def get_repository_pull_requests_DISABLED(
+#     repository_name: str,
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     raise HTTPException(status_code=404, detail="Repository endpoints are disabled - teams only")
+    # Disabled function below:
+    """
     try:
         # URL decode the repository name (FastAPI should do this automatically, but let's be explicit)
         from urllib.parse import unquote
         decoded_repo_name = unquote(repository_name)
         
-        scheduler = get_scheduler()
-        subscribed_repos = scheduler.get_subscribed_repositories()
+        # Repository endpoints disabled - teams only
+        # scheduler = get_scheduler()
+        # subscribed_repos = scheduler.get_subscribed_repositories()
         
-        if decoded_repo_name not in subscribed_repos:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Not subscribed to repository '{decoded_repo_name}'"
-            )
+        # if decoded_repo_name not in subscribed_repos:
+        #     raise HTTPException(
+        #         status_code=404,
+        #         detail=f"Not subscribed to repository '{decoded_repo_name}'"
+        #     )
         
         # Read PRs from database
         db_service = DatabaseService(db)
@@ -500,22 +428,27 @@ async def get_repository_pull_requests(
     except Exception as e:
         logger.error(f"Error getting pull requests for {repository_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    """
 
 
-@router.post("/repositories/{repository_name:path}/refresh")
-async def refresh_repository(repository_name: str):
+# @router.post("/repositories/{repository_name:path}/refresh")
+# async def refresh_repository_DISABLED(repository_name: str):
+#     raise HTTPException(status_code=404, detail="Repository endpoints are disabled - teams only")
+    # Disabled function below:
+    """
     try:
         from urllib.parse import unquote
         decoded_repo_name = unquote(repository_name)
         
-        scheduler = get_scheduler()
-        subscribed_repos = scheduler.get_subscribed_repositories()
+        # Repository endpoints disabled - teams only
+        # scheduler = get_scheduler()
+        # subscribed_repos = scheduler.get_subscribed_repositories()
         
-        if decoded_repo_name not in subscribed_repos:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Not subscribed to repository '{decoded_repo_name}'"
-            )
+        # if decoded_repo_name not in subscribed_repos:
+        #     raise HTTPException(
+        #         status_code=404,
+        #         detail=f"Not subscribed to repository '{decoded_repo_name}'"
+        #     )
         
         await scheduler.force_refresh_repository(decoded_repo_name)
         
@@ -526,6 +459,7 @@ async def refresh_repository(repository_name: str):
     except Exception as e:
         logger.error(f"Error refreshing repository {repository_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    """
 
 
 @router.websocket("/ws/{user_id}")
@@ -895,18 +829,17 @@ async def get_user_relevant_pull_requests():
     try:
         scheduler = get_scheduler()
         
-        # Get subscribed repositories and teams
-        subscribed_repos = scheduler.get_subscribed_repositories()
+        # Get subscribed teams (repositories removed - teams only)
         subscribed_teams = scheduler.get_subscribed_teams()
         
-        if not subscribed_repos and not subscribed_teams:
+        if not subscribed_teams:
             return {"pull_requests": []}
         
         # Get user-relevant PRs from database
         async for db in get_db():
             db_service = DatabaseService(db)
             user_prs = await db_service.get_user_relevant_pull_requests(
-                subscribed_repos=subscribed_repos,
+                subscribed_repos=[],  # repositories removed - teams only
                 subscribed_teams=subscribed_teams
             )
             break
@@ -922,13 +855,14 @@ async def get_user_relevant_pull_requests():
             elif pr.get('status') == 'needs_review' and not pr.get('user_has_reviewed'):
                 filtered_prs.append(pr)
         
-        logger.info(f"Retrieved {len(filtered_prs)} user-relevant PRs from {len(subscribed_repos)} repos and {len(subscribed_teams)} teams")
+        logger.info(f"Retrieved {len(filtered_prs)} user-relevant PRs from {len(subscribed_teams)} teams")
+        logger.debug("About to prepare response object")
         
         return {
             "pull_requests": filtered_prs,
             "total_count": len(filtered_prs),
             "sources": {
-                "repositories": len(subscribed_repos),
+                "repositories": 0,  # repositories removed - teams only
                 "teams": len(subscribed_teams)
             }
         }

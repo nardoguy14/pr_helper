@@ -1,10 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import styled, { createGlobalStyle } from 'styled-components';
-import { Plus, ArrowLeft, ChevronLeft, ChevronRight, Bell, User, LogOut } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Bell, User, LogOut } from 'lucide-react';
 
 import { ReactFlowMindMap } from './components/visualization/ReactFlowMindMap';
 import { PRDirectedGraph } from './components/visualization/PRDirectedGraph';
-import { AddSubscriptionForm } from './components/ui/AddSubscriptionForm';
 import { SubscriptionList } from './components/ui/SubscriptionList';
 import { ConnectionStatus } from './components/ui/ConnectionStatus';
 import { NotificationsPanel as NotificationsPanelComponent } from './components/ui/NotificationsPanel';
@@ -13,13 +12,12 @@ import { AuthorFilter } from './components/ui/AuthorFilter';
 import { TokenSetup } from './components/auth/TokenSetup';
 
 import { useWebSocket } from './hooks/useWebSocket';
-import { useRepositories } from './hooks/useRepositories';
 import { useTeamRepositories } from './hooks/useTeamRepositories';
 import { useTeams } from './hooks/useTeams';
 import { usePullRequests } from './hooks/usePullRequests';
 import { useAuth } from './hooks/useAuth';
 
-import { SubscribeRepositoryRequest, TeamSubscriptionRequest, PullRequest, PRState, PR_STATE_COLORS } from './types';
+import { PullRequest, PRState, PR_STATE_COLORS } from './types';
 
 const GlobalStyle = createGlobalStyle`
   * {
@@ -431,7 +429,7 @@ const SectionTitle = styled.h3`
 `;
 
 function App() {
-  const [showAddForm, setShowAddForm] = useState(false);
+  // Add form removed - teams are auto-discovered
   const [currentView, setCurrentView] = useState<'mindmap' | 'pr-graph'>('mindmap');
   const [repositoriesCollapsed, setRepositoriesCollapsed] = useState(true);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -525,16 +523,7 @@ function App() {
     }
   }, []);
 
-  // Hooks - Pass isAuthenticated to enable data fetching after auth
-  const {
-    repositories,
-    loading: reposLoading,
-    error: reposError,
-    subscribeToRepository,
-    unsubscribeFromRepository,
-    refreshRepository,
-    updateRepositoryStats
-  } = useRepositories(isAuthenticated);
+  // Removed repository hooks - using teams only
 
   // Hook for team-discovered repositories (dynamic nodes)
   const {
@@ -595,31 +584,34 @@ function App() {
       }
     }, [allPullRequests, addPullRequest, updatePullRequest]),
     
-    // Handle repository stats updates
-    useCallback((data: any) => {
-      const { repository, stats } = data;
-      updateRepositoryStats(repository, stats);
-    }, [updateRepositoryStats]),
-    
     isAuthenticated,
     
-    // Handle team PR updates
+    // Handle team PR updates with notifications
     useCallback(async (data: any) => {
       const { team, update_type, pull_request } = data;
       console.log('🔔 Received team PR update:', { team, update_type, pr: pull_request.number });
+
+      // Check if this PR is truly new by comparing against what the frontend knows
+      const teamKey = team;
+      const existingPRs = allTeamPullRequests[teamKey] || [];
+      const prExists = existingPRs.some((pr: any) => pr.id === pull_request.id);
       
-      // Always show notifications for team PRs that need review
-      if (pull_request.status === 'needs_review' && 
-          (pull_request.user_is_requested_reviewer || 
-           pull_request.user_is_assigned ||
-           !pull_request.user_has_reviewed)) {
-        console.log('📢 Showing notification for team PR that needs review');
+      if (!prExists && (pull_request.user_is_assigned || pull_request.user_is_requested_reviewer)) {
+        console.log('📢 TRULY NEW team PR detected, sending notification:', pull_request.number);
         const { NotificationService } = await import('./services/notifications');
-        await NotificationService.notifyPRUpdate(pull_request, update_type);
+        
+        if (pull_request.user_is_assigned) {
+          await NotificationService.notifyNewAssignment(pull_request);
+        } else if (pull_request.user_is_requested_reviewer) {
+          await NotificationService.notifyNewReviewRequest(pull_request);
+        }
+      } else if (prExists) {
+        console.log('🔕 PR already exists in frontend, skipping notification:', pull_request.number);
+      } else {
+        console.log('🔕 PR does not require user attention, skipping notification:', pull_request.number);
       }
       
       // Update team PR data if we're tracking this team
-      const teamKey = team;
       if (allTeamPullRequests[teamKey]) {
         const existingPRs = allTeamPullRequests[teamKey];
         const prIndex = existingPRs.findIndex((pr: any) => pr.id === pull_request.id);
@@ -657,12 +649,12 @@ function App() {
   // Track when initial data is loaded after authentication
   useEffect(() => {
     if (isAuthenticated && !initialDataLoaded) {
-      // Mark as loaded when we have either repos or teams data, or both finished loading
-      if ((!reposLoading && !teamsLoading) && (repositories.length > 0 || teams.length > 0)) {
+      // Mark as loaded when teams data is loaded
+      if (!teamsLoading && teams.length > 0) {
         setInitialDataLoaded(true);
       }
     }
-  }, [isAuthenticated, initialDataLoaded, reposLoading, teamsLoading, repositories.length, teams.length]);
+  }, [isAuthenticated, initialDataLoaded, teamsLoading, teams.length]);
 
   // Reset initial data loaded state when user logs out
   useEffect(() => {
@@ -707,32 +699,14 @@ function App() {
     }
   }, [discoveredTeamRepositories]);
 
-  // Preload PR data for all repositories when they change
-  useEffect(() => {
-    if (repositories.length > 0 && !reposLoading) {
-      const repositoryNames = repositories.map(repo => repo.repository.full_name);
-      fetchPullRequestsForAllRepositories(repositoryNames);
-    }
-  }, [repositories, reposLoading, fetchPullRequestsForAllRepositories]);
-
-  // Add automatic polling every 30 seconds for repository PR data as fallback to WebSocket
-  useEffect(() => {
-    if (!isAuthenticated || repositories.length === 0) return;
-
-    const interval = setInterval(() => {
-      const repositoryNames = repositories.map(repo => repo.repository.full_name);
-      fetchPullRequestsForAllRepositories(repositoryNames);
-    }, 30000); // Poll every 30 seconds
-
-    return () => clearInterval(interval);
-  }, [fetchPullRequestsForAllRepositories, isAuthenticated, repositories]);
+  // Repository polling removed - teams only
 
   // Load user-relevant PRs for notifications on app start and when teams change
   useEffect(() => {
-    if ((repositories.length > 0 && !reposLoading) || (teams.length > 0 && !teamsLoading)) {
+    if (teams.length > 0 && !teamsLoading) {
       fetchUserRelevantPullRequests();
     }
-  }, [repositories, reposLoading, teams, teamsLoading, fetchUserRelevantPullRequests]);
+  }, [teams, teamsLoading, fetchUserRelevantPullRequests]);
 
   // Request notification permissions on app start
   useEffect(() => {
@@ -746,10 +720,13 @@ function App() {
 
   // Detect new PR assignments and review requests for notifications
   useEffect(() => {
+    console.log('🔍 Checking for new PRs via polling. Current:', userRelevantPRs.length, 'Previous:', previousUserPRs.length);
+    
     if (userRelevantPRs.length === 0) return;
 
     // Skip on first load to avoid notifications for existing PRs
     if (previousUserPRs.length === 0) {
+      console.log('📋 First load - setting initial PR list without notifications');
       setPreviousUserPRs(userRelevantPRs);
       return;
     }
@@ -757,6 +734,9 @@ function App() {
     const newPRs = userRelevantPRs.filter(currentPR => 
       !previousUserPRs.some(prevPR => prevPR.id === currentPR.id)
     );
+    console.log(userRelevantPRs)
+    
+    console.log('🆕 Found new PRs:', newPRs.map(pr => ({id: pr.id, number: pr.number, title: pr.title, repo: pr.repository?.full_name})));
 
     // Check for existing PRs with new assignments or review requests
     const updatedPRs = userRelevantPRs.filter(currentPR => {
@@ -772,11 +752,16 @@ function App() {
     });
 
     // Send notifications for new PRs
+    if (newPRs.length > 0) {
+      console.log('🔔 Polling detected new PRs, sending notifications:', newPRs.map(pr => ({id: pr.id, number: pr.number, title: pr.title})));
+    }
     newPRs.forEach(async (pr) => {
       const { NotificationService } = await import('./services/notifications');
       if (pr.user_is_assigned) {
+        console.log('📢 Sending new assignment notification for PR:', pr.number);
         await NotificationService.notifyNewAssignment(pr);
       } else if (pr.user_is_requested_reviewer) {
+        console.log('📢 Sending new review request notification for PR:', pr.number);
         await NotificationService.notifyNewReviewRequest(pr);
       }
     });
@@ -788,8 +773,10 @@ function App() {
       if (!prevPR) return;
 
       if (!prevPR.user_is_assigned && pr.user_is_assigned) {
+        console.log('📢 Sending new assignment notification for PR:', pr.number);
         await NotificationService.notifyNewAssignment(pr);
       } else if (!prevPR.user_is_requested_reviewer && pr.user_is_requested_reviewer) {
+        console.log('📢 Sending new review request notification for PR:', pr.number);
         await NotificationService.notifyNewReviewRequest(pr);
       }
     });
@@ -867,35 +854,14 @@ function App() {
     });
   }, [teams, isAuthenticated, allTeamPullRequests]);
 
-  const handleAddRepository = async (request: SubscribeRepositoryRequest) => {
-    try {
-      await subscribeToRepository(request);
-      setShowAddForm(false);
-    } catch (error) {
-      console.error('Failed to add repository:', error);
-      // Error is handled by the hook
-    }
-  };
+  // Repository subscription removed - teams only
 
-  const handleAddTeam = async (request: TeamSubscriptionRequest) => {
-    try {
-      await subscribeToTeam(request);
-      setShowAddForm(false);
-    } catch (error) {
-      console.error('Failed to add team:', error);
-      // Error is handled by the hook
-    }
-  };
+  // Team subscription removed - teams are auto-discovered
 
-  const handleRemoveRepository = async (repositoryName: string) => {
-    // Remove from expanded repositories if it was expanded
-    if (expandedRepositories.has(repositoryName)) {
-      toggleRepositoryExpansion(repositoryName);
-    }
-    await unsubscribeFromRepository(repositoryName);
-  };
+  // Repository removal removed - teams only
 
   const handleRepositoryClick = useCallback(async (nodeId: string, repositoryName: string) => {
+    // Repository clicking still supported for viewing PRs from teams
     console.log('handleRepositoryClick called:', nodeId, repositoryName);
     console.log('Current expandedRepositoryNodes before toggle:', Array.from(expandedRepositoryNodes));
     
@@ -913,11 +879,10 @@ function App() {
       return newSet;
     });
     
-    // Check if we already have PR data for this repository (either from direct subscription or team)
-    const hasPRData = allPullRequests[repositoryName] || 
-                     Object.values(allTeamPullRequests).some(teamPRs => 
-                       teamPRs.some((pr: any) => pr.repository.full_name === repositoryName)
-                     );
+    // Check if we have PR data for this repository from teams
+    const hasPRData = Object.values(allTeamPullRequests).some(teamPRs => 
+      teamPRs.some((pr: any) => pr.repository.full_name === repositoryName)
+    );
     
     if (hasPRData) {
       // If we have PR data from teams, populate the allPullRequests for this repo
@@ -940,16 +905,8 @@ function App() {
       
       // Also toggle in the old system for backward compatibility
       toggleRepositoryExpansion(repositoryName);
-    } else {
-      // Fetch PR data if we don't have it
-      try {
-        await fetchPullRequestsForRepository(repositoryName);
-        toggleRepositoryExpansion(repositoryName);
-      } catch (error) {
-        console.error('Failed to fetch pull requests:', error);
-      }
     }
-  }, [expandedRepositoryNodes, allPullRequests, allTeamPullRequests, addPullRequest, toggleRepositoryExpansion, fetchPullRequestsForRepository]);
+  }, [expandedRepositoryNodes, allPullRequests, allTeamPullRequests, addPullRequest, toggleRepositoryExpansion]);
 
   const handleTeamClick = useCallback(async (organization: string, teamName: string) => {
     console.log('handleTeamClick called:', organization, teamName);
@@ -1304,14 +1261,14 @@ function App() {
   }
 
   // Show loading screen while fetching initial data after authentication
-  if (isAuthenticated && !initialDataLoaded && (reposLoading || teamsLoading)) {
+  if (isAuthenticated && !initialDataLoaded && teamsLoading) {
     return (
       <>
         <GlobalStyle />
         <AppContainer style={{ justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '18px', marginBottom: '8px' }}>Loading your data...</div>
-            <div style={{ color: '#586069' }}>Fetching repositories and teams</div>
+            <div style={{ color: '#586069' }}>Fetching teams</div>
           </div>
         </AppContainer>
       </>
@@ -1525,37 +1482,28 @@ function App() {
           {/* Subscriptions Section */}
           <SectionTitle>Subscriptions</SectionTitle>
           
-          {(reposError || teamsError) && (
+          {teamsError && (
             <ErrorMessage>
-              {reposError || teamsError}
+              {teamsError}
             </ErrorMessage>
           )}
           
-          {(reposLoading || teamsLoading) && repositories.length === 0 && teams.length === 0 ? (
+          {teamsLoading && teams.length === 0 ? (
             <EmptyState>
               <h3>Loading subscriptions...</h3>
-              <p>Fetching your subscribed repositories and teams from GitHub.</p>
+              <p>Fetching your subscribed teams from GitHub.</p>
             </EmptyState>
           ) : (
             <SubscriptionList
-              repositories={visibleRepositories}
+              repositories={[]}
               teams={teamsWithFilteredCounts}
-              onRemoveRepository={handleRemoveRepository}
-              onRefreshRepository={refreshRepository}
               onRemoveTeam={unsubscribeFromTeam}
               onRefreshTeam={refreshTeam}
-              loading={reposLoading || teamsLoading}
+              loading={teamsLoading}
             />
           )}
           
-          <Button 
-            $variant="primary" 
-            onClick={() => setShowAddForm(true)}
-            style={{ marginTop: '16px', width: '100%' }}
-          >
-            <Plus size={16} />
-            Add Subscription
-          </Button>
+          {/* Add button removed - teams are auto-discovered */}
         </RepositoriesPanel>
 
         <RepositoriesToggle
@@ -1587,15 +1535,15 @@ function App() {
             )}
 
             {currentView === 'mindmap' ? (
-              reposLoading && repositories.length === 0 ? (
+              teamsLoading && teams.length === 0 ? (
                 <EmptyState>
                   <h3>Loading...</h3>
-                  <p>Setting up your repository dashboard.</p>
+                  <p>Setting up your teams dashboard.</p>
                 </EmptyState>
-              ) : visibleRepositories.length > 0 || teamsWithFilteredCounts.length > 0 ? (
+              ) : teamsWithFilteredCounts.length > 0 ? (
                 <ReactFlowMindMap
                   key={`mindmap-${dateFilter.startDate?.getTime() || 0}-${dateFilter.endDate?.getTime() || 0}-${Array.from(statusFilter).sort().join(',')}-${includeDrafts}-${Array.from(prStatusFilter).sort().join(',')}-${Array.from(authorFilter).sort().join(',')}`}
-                  repositories={visibleRepositories}
+                  repositories={[]}
                   teams={teamsWithFilteredCounts}
                   onRepositoryClick={handleRepositoryClick}
                   onTeamClick={handleTeamClick}
@@ -1609,15 +1557,7 @@ function App() {
               ) : (
                 <EmptyState>
                   <h3>Welcome to PR Monitor</h3>
-                  <p>Add repositories or teams to start monitoring pull requests in a visual mind map.</p>
-                  <Button 
-                    $variant="primary" 
-                    onClick={() => setShowAddForm(true)}
-                    style={{ marginTop: '16px' }}
-                  >
-                    <Plus size={16} />
-                    Add Your First Subscription
-                  </Button>
+                  <p>Teams are automatically discovered from your GitHub account. If you don't see any teams, make sure you're a member of GitHub teams in your organizations.</p>
                 </EmptyState>
               )
             ) : (
@@ -1632,12 +1572,7 @@ function App() {
           </ContentArea>
         </Main>
 
-        <AddSubscriptionForm
-          isVisible={showAddForm}
-          onSubmitRepository={handleAddRepository}
-          onSubmitTeam={handleAddTeam}
-          onCancel={() => setShowAddForm(false)}
-        />
+        {/* AddSubscriptionForm removed - teams are auto-discovered */}
       </AppContainer>
     </>
   );

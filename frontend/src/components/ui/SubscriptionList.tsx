@@ -1,13 +1,11 @@
 import React from 'react';
 import styled from 'styled-components';
 import { Trash2, RefreshCw, ExternalLink, GitBranch, Eye, Users, UserCheck } from 'lucide-react';
-import { RepositoryStats, TeamStats, SubscriptionType } from '../../types';
+import { TeamStats, SubscriptionType } from '../../types';
 
 interface SubscriptionListProps {
-  repositories: RepositoryStats[];
+  repositories: any[]; // Empty array - no direct repository subscriptions
   teams: TeamStats[];
-  onRemoveRepository: (repositoryName: string) => Promise<void>;
-  onRefreshRepository: (repositoryName: string) => Promise<void>;
   onRemoveTeam: (organization: string, teamName: string) => Promise<void>;
   onRefreshTeam: (organization: string, teamName: string) => Promise<void>;
   loading?: boolean;
@@ -181,8 +179,6 @@ const LastUpdated = styled.div`
 export const SubscriptionList: React.FC<SubscriptionListProps> = ({
   repositories,
   teams,
-  onRemoveRepository,
-  onRefreshRepository,
   onRemoveTeam,
   onRefreshTeam,
   loading = false,
@@ -200,7 +196,7 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
     return date.toLocaleDateString();
   };
 
-  const totalCount = repositories.length + teams.length;
+  const totalCount = teams.length;
 
   if (totalCount === 0) {
     return (
@@ -211,7 +207,7 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
             <GitBranch size={48} />
           </EmptyStateIcon>
           <h3>No subscriptions</h3>
-          <p>Add repositories or teams to start monitoring pull requests.</p>
+          <p>Add teams to start monitoring pull requests.</p>
         </EmptyState>
       </Container>
     );
@@ -225,95 +221,7 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
       
       <ScrollableContent>
         {/* Repository Subscriptions */}
-        {repositories.map(repo => (
-        <SubscriptionItem key={`repo-${repo.repository.full_name}`}>
-          <SubscriptionHeader>
-            <SubscriptionName>
-              <GitBranch size={16} />
-              <div>
-                <SubscriptionMeta>
-                  <SubscriptionTitle
-                    as="a"
-                    href={repo.repository.html_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {repo.repository.full_name}
-                  </SubscriptionTitle>
-                  <TypeBadge $type="repository">Repository</TypeBadge>
-                </SubscriptionMeta>
-                {repo.repository.description && (
-                  <SubscriptionDescription>
-                    {repo.repository.description}
-                  </SubscriptionDescription>
-                )}
-              </div>
-            </SubscriptionName>
-            
-            <ActionButtons>
-              <ActionButton
-                onClick={() => onRefreshRepository(repo.repository.full_name)}
-                disabled={loading}
-                title="Refresh repository data"
-              >
-                <RefreshCw size={14} />
-                Refresh
-              </ActionButton>
-              
-              <ActionButton
-                as="a"
-                href={repo.repository.html_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open in GitHub"
-              >
-                <ExternalLink size={14} />
-              </ActionButton>
-              
-              <ActionButton
-                variant="danger"
-                onClick={() => onRemoveRepository(repo.repository.full_name)}
-                disabled={loading}
-                title="Unsubscribe from repository"
-              >
-                <Trash2 size={14} />
-              </ActionButton>
-            </ActionButtons>
-          </SubscriptionHeader>
-          
-          <StatsContainer>
-            <StatItem>
-              <GitBranch size={14} />
-              <StatNumber>{repo.total_open_prs}</StatNumber>
-              open PRs
-            </StatItem>
-            
-            <StatItem>
-              <Eye size={14} />
-              <StatNumber>{repo.review_requests}</StatNumber>
-              review requests
-            </StatItem>
-            
-            <StatItem>
-              <Users size={14} />
-              <StatNumber>{repo.assigned_to_user}</StatNumber>
-              assigned to you
-            </StatItem>
-            
-            {repo.code_owner_prs > 0 && (
-              <StatItem>
-                <Users size={14} />
-                <StatNumber>{repo.code_owner_prs}</StatNumber>
-                code owner PRs
-              </StatItem>
-            )}
-          </StatsContainer>
-          
-          <LastUpdated>
-            Last updated: {formatTime(repo.last_updated)}
-          </LastUpdated>
-        </SubscriptionItem>
-      ))}
+        {/* Repository subscriptions removed - teams only */}
 
       {/* Team Subscriptions */}
       {teams.map(team => (

@@ -10,7 +10,6 @@ interface UseWebSocketReturn {
 
 export function useWebSocket(
   onPRUpdate?: (data: any) => void,
-  onRepositoryStatsUpdate?: (data: any) => void,
   isAuthenticated: boolean = false,
   onTeamPRUpdate?: (data: any) => void
 ): UseWebSocketReturn {
@@ -37,6 +36,21 @@ export function useWebSocket(
   }, []);
 
   useEffect(() => {
+    // Auto-connect when authenticated
+    if (isAuthenticated) {
+      connect();
+    } else {
+      // Disconnect if not authenticated
+      disconnect();
+    }
+
+    return () => {
+      disconnect();
+    };
+  }, [isAuthenticated, connect, disconnect]); // Remove callback dependencies to prevent reconnection loops
+
+  // Update event handlers when callbacks change (without reconnecting)
+  useEffect(() => {
     const handlers: WebSocketEventHandlers = {
       onConnectionEstablished: () => {
         setIsConnected(true);
@@ -49,24 +63,11 @@ export function useWebSocket(
         setError(errorMessage);
       },
       onPRUpdate: onPRUpdate,
-      onRepositoryStatsUpdate: onRepositoryStatsUpdate,
       onTeamPRUpdate: onTeamPRUpdate,
     };
 
     websocketService.setEventHandlers(handlers);
-
-    // Auto-connect when authenticated
-    if (isAuthenticated) {
-      connect();
-    } else {
-      // Disconnect if not authenticated
-      disconnect();
-    }
-
-    return () => {
-      disconnect();
-    };
-  }, [connect, disconnect, onPRUpdate, onRepositoryStatsUpdate, onTeamPRUpdate, isAuthenticated]);
+  }, [onPRUpdate, onTeamPRUpdate]);
 
   return {
     isConnected,

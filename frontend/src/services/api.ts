@@ -1,10 +1,7 @@
 import axios, { AxiosResponse } from 'axios';
 import {
-  RepositoryStats,
   PullRequest,
-  SubscribeRepositoryRequest,
   ApiResponse,
-  RepositorySubscription,
   TeamSubscriptionRequest,
   TeamSubscription,
   TeamStats,
@@ -53,42 +50,6 @@ class ApiService {
     }
   }
 
-  // Repository Management
-  async subscribeToRepository(request: SubscribeRepositoryRequest): Promise<ApiResponse<RepositorySubscription>> {
-    return this.handleRequest(
-      axios.post(this.getUrl('/repositories/subscribe'), request)
-    );
-  }
-
-  async unsubscribeFromRepository(repositoryName: string): Promise<ApiResponse<null>> {
-    return this.handleRequest(
-      axios.post(this.getUrl('/repositories/unsubscribe'), {
-        repository_name: repositoryName
-      })
-    );
-  }
-
-  async getSubscribedRepositories(): Promise<{ repositories: RepositoryStats[]; total_count: number }> {
-    return this.handleRequest(
-      axios.get(this.getUrl('/repositories'))
-    );
-  }
-
-  async getRepositoryPullRequests(repositoryName: string): Promise<{ 
-    pull_requests: PullRequest[]; 
-    repository_name: string; 
-    total_count: number 
-  }> {
-    return this.handleRequest(
-      axios.get(this.getUrl(`/repositories/${encodeURIComponent(repositoryName)}/pull-requests`))
-    );
-  }
-
-  async refreshRepository(repositoryName: string): Promise<{ success: boolean; message: string }> {
-    return this.handleRequest(
-      axios.post(this.getUrl(`/repositories/${encodeURIComponent(repositoryName)}/refresh`))
-    );
-  }
 
   // Team Management
   async subscribeToTeam(request: TeamSubscriptionRequest): Promise<SubscribeTeamResponse> {

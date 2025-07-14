@@ -16,13 +16,13 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import styled from 'styled-components';
 
-import { RepositoryStats, TeamStats, PullRequest } from '../../types';
+import { TeamStats, PullRequest } from '../../types';
 import { RepositoryNode } from './nodes/RepositoryNode';
 import { TeamNode } from './nodes/TeamNode';
 import { PRNode } from './nodes/PRNode';
 
 interface ReactFlowMindMapProps {
-  repositories: RepositoryStats[];
+  repositories: any[]; // Empty array - no direct repository subscriptions
   teams: TeamStats[];
   onRepositoryClick: (nodeId: string, repositoryName: string) => void;
   onTeamClick: (organization: string, teamName: string) => void;
@@ -479,9 +479,13 @@ const ReactFlowMindMapInner: React.FC<ReactFlowMindMapProps> = ({
               type: 'repository',
               position: { x: repoX, y: repoY },
               data: {
-                repository: repoStats,
+                id: repoNodeId,
+                repositoryName: repoName,
+                prCount: filteredRepoPRs.length,
+                reviewRequests: filteredRepoPRs.filter((pr: any) => pr.user_is_requested_reviewer).length,
+                assignedToUser: filteredRepoPRs.filter((pr: any) => pr.user_is_assigned).length,
                 isExpanded: isExpanded,
-                onClick: onRepositoryClick,
+                onClick: () => onRepositoryClick(repoNodeId, repoName),
               },
               sourcePosition: Position.Bottom,
               targetPosition: Position.Top,
